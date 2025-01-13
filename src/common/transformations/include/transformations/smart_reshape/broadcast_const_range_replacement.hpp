@@ -1,11 +1,11 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <openvino/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
+#include "openvino/pass/matcher_pass.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 namespace pass {
@@ -16,19 +16,13 @@ class TRANSFORMATIONS_API BroadcastConstRangeReplacement;
 }  // namespace ov
 
 /**
- * @ingroup ie_transformation_common_api
+ * @ingroup ov_transformation_common_api
  * @brief BroadcastConstRangeReplacement replaces Constant filled with range values starting from 0 and replaces it with
  * Range op
  */
 
 class ov::pass::BroadcastConstRangeReplacement : public ov::pass::MatcherPass {
 public:
-    OPENVINO_RTTI("BroadcastConstRangeReplacement", "0");
+    OPENVINO_MATCHER_PASS_RTTI("BroadcastConstRangeReplacement");
     BroadcastConstRangeReplacement();
 };
-
-namespace ngraph {
-namespace pass {
-using ov::pass::BroadcastConstRangeReplacement;
-}  // namespace pass
-}  // namespace ngraph

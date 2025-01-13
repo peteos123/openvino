@@ -4,105 +4,89 @@
 
 #pragma once
 
-#include <ie_common.h>
+#include "executors/subgraph.hpp"
+#include "node.h"
 
-#include <onednn/dnnl.h>
-#include <cpu/x64/jit_generator.hpp>
-#include "emitters/jit_snippets_emitters.hpp"
-
-#include <node.h>
-#include "snippets/op/subgraph.hpp"
-
-#include <array>
+#if defined(OPENVINO_ARCH_ARM64)
+#    include "cpu/aarch64/cpu_isa_traits.hpp"
+#else
+#    include "cpu/x64/cpu_isa_traits.hpp"
+#endif
 
 namespace ov {
 namespace intel_cpu {
 namespace node {
 
-/// Snippet represents subgraph node in CPU plugin
-/// potentially, snippet can be placed as a postop to any support operation while it doesn't support postops itself
-/// precision: fp32
-class Snippet : public Node {
+class Subgraph : public Node {
 public:
-    Snippet(const std::shared_ptr<ngraph::Node>& op, const GraphContext::CPtr context);
-    ~Snippet() override = default;
+    Subgraph(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr& context);
+    ~Subgraph() override = default;
 
-    void getSupportedDescriptors() override {};
+    void getSupportedDescriptors() override{};
     void initSupportedPrimitiveDescriptors() override;
     void selectOptimalPrimitiveDescriptor() override;
-    InferenceEngine::Precision getRuntimePrecision() const override;
+    ov::element::Type getRuntimePrecision() const override;
 
-    // to avoid collisions in throughput mode with copy of TypeRelaxed nodes
-    // we should have common shared mutex between streams
-    void setSharedMutex(const std::shared_ptr<std::mutex>& mutex);
-
-    // Here we convert to canonical for & jit everything
     void createPrimitive() override;
+    void prepareParams() override;
 
     bool canBeInPlace() const override;
     bool created() const override;
 
     // if generator is set, it would execute generated code otherwise it would fallback to nGraph reference
     void execute(dnnl::stream strm) override;
+    void executeDynamicImpl(dnnl::stream strm) override;
+
+protected:
+    IShapeInfer::Result shapeInfer() const override;
 
 private:
-    static const size_t rank6D {6};
+    void initMemoryPtrs();
+    void initAttributes();
+    void initStartOffsets();
+    void initPluginBlockedShapes() const;
+    void optimizeIR();
 
-    typedef void (*kernel)(const void *, const void *);
+    snippets::op::Subgraph::BlockedShapeVector getSnippetsBlockedShapes() const;
+    std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> getIOPrecisions() const;
 
-    // Create a deep local copy of the input snippet to perform canonicalization & code generation
-    // TODO: Probably better to implement a proper copy constructor
-    // NOTE: Before call mutex should be initialized
-    void copy_snippet();
+    static uint64_t getBodyHash(const std::shared_ptr<snippets::op::Subgraph>& snippet);
+    uint32_t getBroadcastingMask(const std::vector<VectorDims>& input_shapes);
 
-    void define_schedule();
+    using DataFlowPasses = std::vector<ov::snippets::pass::Manager::PositionedPassBase>;
+    using ControlFlowPasses = std::vector<ov::snippets::lowered::pass::PassPipeline::PositionedPassLowered>;
 
-    void generate();
-
-    // Evaluates generated snippet using parallel backend
-    void schedule_6d(const jit_snippets_call_args& const_args) const;
-    void schedule_nt(const jit_snippets_call_args& const_args) const;
-
-    // Original subgraph node
-    std::shared_ptr<ngraph::snippets::op::Subgraph> original_snippet;
-    // Local copy of subgraph node for canonization & code generation
-    std::shared_ptr<ngraph::snippets::op::Subgraph> snippet;
-
-    // Holds generated snippet with information about how to schedule it
-    ngraph::snippets::Schedule schedule;
+    DataFlowPasses getDataFlowPasses();
+    ControlFlowPasses getControlFlowPasses() const;
 
     // Holds ISA version used is codeGeneration target
+#if defined(OPENVINO_ARCH_ARM64)
+    dnnl::impl::cpu::aarch64::cpu_isa_t host_isa;
+#else
     dnnl::impl::cpu::x64::cpu_isa_t host_isa;
+#endif
 
-    // Holds index of output used as in execution domain
-    // it should be compatible with a schedule's work size
-    std::vector<size_t> exec_domain = {};
+    std::shared_ptr<SubgraphAttrs> subgraph_attrs;
 
-    /// scheduling info
-    size_t batchDimIdx = 0;
-    size_t tensorRank = 0;
-    size_t tileRank = 1;
-    size_t fullWorkAmount = 0;
-    size_t schedulerWorkAmount = 0;
-    const size_t maxTileRank = 2;
+    // Index of Paramater -> Index of broadcastable dimension from end
+    std::map<size_t, size_t> broadcastable_inputs = {};
+
+    size_t input_num = 0;
+    size_t output_num = 0;
 
     std::vector<MemoryPtr> srcMemPtrs = {};
     std::vector<MemoryPtr> dstMemPtrs = {};
 
-    std::vector<std::vector<size_t>> dims_in = {};
-    std::vector<std::vector<size_t>> offsets_in = {};
     std::vector<ptrdiff_t> start_offset_in = {};
     std::vector<ptrdiff_t> start_offset_out = {};
 
-    std::vector<std::vector<size_t>> dims_out = {};
-    std::vector<std::vector<size_t>> offsets_out = {};
+    bool is_dynamic = false;
+    // Input shapes that are used in PrepareParams and ShapeInfer to avoid frequent memory allocation
+    mutable std::vector<VectorDims> in_shapes;
 
-    std::vector<int64_t> sch_dims = {};
-    std::vector<int64_t> sch_offsets_in = {};
-    std::vector<int64_t> sch_offsets_out = {};
-    bool canUseOptimizedImpl = true;
+    std::shared_ptr<SubgraphBaseExecutor> execPtr = nullptr;
 };
 
-}   // namespace node
-}   // namespace intel_cpu
-}   // namespace ov
+}  // namespace node
+}  // namespace intel_cpu
+}  // namespace ov

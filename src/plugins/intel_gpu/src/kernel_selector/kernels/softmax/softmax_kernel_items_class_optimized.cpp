@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -8,6 +8,17 @@
 namespace kernel_selector {
 // how many workitems we use to calculate item classes for one output, only 16 supported right now
 static const auto workitems_per_classes = 16;
+
+inline static size_t get_class_pitch(const DataTensor& tensor, SoftmaxDim dim) {
+    switch (dim) {
+        case SoftmaxDim::X: return tensor.X().pitch;
+        case SoftmaxDim::Y: return tensor.Y().pitch;
+        case SoftmaxDim::Z: return tensor.Z().pitch;
+        case SoftmaxDim::FEATURE: return tensor.Feature().pitch;
+        case SoftmaxDim::BATCH: return tensor.Batch().pitch;
+        default: return 0;
+    }
+}
 
 inline static size_t GetItemClassCount(const DataTensor& input, SoftmaxDim dim) {
     size_t item_class_count = 0;
@@ -35,9 +46,39 @@ inline static size_t GetItemClassCount(const DataTensor& input, SoftmaxDim dim) 
     return item_class_count;
 }
 
-ParamsKey SoftmaxKerneItemsClassOptimized::GetSupportedKey() const { return GetDefaultSupportedKey(); }
+ParamsKey SoftmaxKerneItemsClassOptimized::GetSupportedKey() const {
+    ParamsKey k;
+    k.EnableInputDataType(Datatype::F16);
+    k.EnableInputDataType(Datatype::F32);
+    k.EnableOutputDataType(Datatype::F16);
+    k.EnableOutputDataType(Datatype::F32);
+    k.EnableInputLayout(DataLayout::byxf);
+    k.EnableInputLayout(DataLayout::bfyx);
+    k.EnableInputLayout(DataLayout::yxfb);
+    k.EnableInputLayout(DataLayout::bf);
+    k.EnableInputLayout(DataLayout::fb);
+    k.EnableInputLayout(DataLayout::bfzyx);
+    k.EnableInputLayout(DataLayout::f);
+    k.EnableOutputLayout(DataLayout::f);
+    k.EnableOutputLayout(DataLayout::bfyx);
+    k.EnableOutputLayout(DataLayout::byxf);
+    k.EnableOutputLayout(DataLayout::yxfb);
+    k.EnableOutputLayout(DataLayout::bf);
+    k.EnableOutputLayout(DataLayout::fb);
+    k.EnableOutputLayout(DataLayout::bfzyx);
+    k.EnableSoftmaxDim(SoftmaxDim::X);
+    k.EnableSoftmaxDim(SoftmaxDim::Y);
+    k.EnableSoftmaxDim(SoftmaxDim::Z);
+    k.EnableSoftmaxDim(SoftmaxDim::FEATURE);
+    k.EnableSoftmaxDim(SoftmaxDim::BATCH);
+    k.EnableDifferentTypes();
+    k.EnableTensorOffset();
+    k.EnableTensorPitches();
+    k.EnableBatching();
+    return k;
+}
 
-DeviceFeaturesKey SoftmaxKerneItemsClassOptimized::get_required_device_features_key(const Params& params, const optional_params& options) const {
+DeviceFeaturesKey SoftmaxKerneItemsClassOptimized::get_required_device_features_key(const Params& params) const {
     DeviceFeaturesKey k;
     k.requires_subgroups();
     k.requires_subgroup_reduce();
@@ -63,12 +104,14 @@ SoftmaxKerneItemsClassOptimized::Parent::DispatchData SoftmaxKerneItemsClassOpti
 
     dispatchData.lws = { 1, static_cast<size_t>(workitems_per_classes), 1 };
 
-    dispatchData.leftovers = GetItemClassCount(input, params.dim) % workitems_per_classes;
+    dispatchData.dataSetsCount = dispatchData.gws[2];
+    dispatchData.dataSetSize = GetItemClassCount(input, params.dim);
+    dispatchData.leftovers = dispatchData.dataSetSize % workitems_per_classes;
 
     return dispatchData;
 }
 
-KernelsPriority SoftmaxKerneItemsClassOptimized::GetKernelsPriority(const Params& params, const optional_params& /*options*/) const {
+KernelsPriority SoftmaxKerneItemsClassOptimized::GetKernelsPriority(const Params& params) const {
     const auto& p = static_cast<const softmax_params&>(params);
 
     return GetItemClassCount(p.inputs[0], p.dim) >= 32 ? FORCE_PRIORITY_7 : DONT_USE_IF_HAVE_SOMETHING_ELSE;
@@ -77,13 +120,23 @@ KernelsPriority SoftmaxKerneItemsClassOptimized::GetKernelsPriority(const Params
 JitConstants SoftmaxKerneItemsClassOptimized::GetJitConstants(const softmax_params& params, DispatchData dispatchData) const {
     auto jit = SoftmaxItemsClassKernelBase::GetJitConstants(params, dispatchData);
 
-    jit.AddConstant(MakeJitConstant("WORKITEMS_PER_CLASSES", workitems_per_classes));
-    jit.AddConstant(MakeJitConstant("HAS_DRIVER_PROBLEMS", params.engineInfo.supports_imad));
+    // sub_group_block_write requires
+    // 1. aligned memory, therefore it can be utilized if memory is aligned by 16 bytes
+    // 2. class dimension is innermost or all other dims equal to 1
+    bool isSubGroupBlockIOEnabled = get_class_pitch(params.outputs[0], params.dim) == 1 &&
+                                    get_class_pitch(params.inputs[0], params.dim) == 1 &&
+                                    (dispatchData.dataSetSize * params.outputs[0].ElementSize()) % 16 == 0;
+
+    jit.AddConstants({
+        MakeJitConstant("LEFTOVERS", dispatchData.leftovers),
+        MakeJitConstant("WORKITEMS_PER_CLASSES", workitems_per_classes),
+        MakeJitConstant("HAS_DRIVER_PROBLEMS", params.engineInfo.supports_imad),
+        MakeJitConstant("IS_SUBGROUP_BLOCK_IO_ENABLED", isSubGroupBlockIOEnabled),
+    });
 
     return jit;
 }
-KernelsData SoftmaxKerneItemsClassOptimized::GetKernelsData(const Params& params,
-                                                            const optional_params& options) const {
-    return GetCommonKernelsData(params, options);
+KernelsData SoftmaxKerneItemsClassOptimized::GetKernelsData(const Params& params) const {
+    return GetCommonKernelsData(params);
 }
 }  // namespace kernel_selector

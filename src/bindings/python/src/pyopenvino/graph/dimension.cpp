@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -94,6 +94,15 @@ void regclass_graph_Dimension(py::module m) {
                 :return: Value of the dimension.
                 :rtype: int
             )");
+    dim.def_property_readonly("min_length",
+                              &ov::Dimension::get_min_length,
+                              R"(
+                Return this dimension's min_dimension as integer.
+                This dimension must be dynamic and non-negative.
+
+                :return: Value of the dimension.
+                :rtype: int
+            )");
     dim.def("get_max_length",
             &ov::Dimension::get_max_length,
             R"(
@@ -103,6 +112,44 @@ void regclass_graph_Dimension(py::module m) {
                 :return: Value of the dimension.
                 :rtype: int
             )");
+    dim.def_property_readonly("max_length",
+                              &ov::Dimension::get_max_length,
+                              R"(
+                Return this dimension's max_dimension as integer.
+                This dimension must be dynamic and non-negative.
+
+                :return: Value of the dimension.
+                :rtype: int
+            )");
+
+    /// Symbol-related methods: START
+    dim.def("has_symbol",
+            &ov::Dimension::has_symbol,
+            R"(
+              Check if Dimension has meaningful symbol.
+
+              :return: True if symbol was set, else False.
+              :rtype: bool
+            )");
+    dim.def("get_symbol",
+            &ov::Dimension::get_symbol,
+            R"(
+                Return this dimension's symbol as Symbol object.
+
+                :return: Value of the dimension.
+                :rtype: openvino.Symbol
+            )");
+
+    dim.def("set_symbol",
+            &ov::Dimension::set_symbol,
+            py::arg("symbol"),
+            R"(
+                Sets provided Symbol as this dimension's symbol.
+
+                :param symbol: The symbol to set to this dimension.
+                :type symbol: openvino.Symbol
+            )");
+    /// Symbol-related methods: END
 
     dim.def("same_scheme",
             &ov::Dimension::same_scheme,
@@ -171,7 +218,7 @@ void regclass_graph_Dimension(py::module m) {
     });
 
     dim.def("__repr__", [](const ov::Dimension& self) -> std::string {
-        return "<Dimension: " + py::cast(self).attr("__str__")().cast<std::string>() + ">";
+        return "<" + Common::get_class_name(self) + ": " + py::cast(self).attr("__str__")().cast<std::string>() + ">";
     });
 
     dim.def("to_string", &ov::Dimension::to_string);

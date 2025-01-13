@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -35,17 +35,39 @@ ParamsKey CumSumKernelRef::GetSupportedKey() const {
 
 JitConstants CumSumKernelRef::GetJitConstants(const cum_sum_params& params, DispatchData dispatchData) const {
     auto jits = CumSumKernelBase::GetJitConstants(params, dispatchData);
+    auto axis_idx = GetCumSumAxisIndex(params);
 
-    jits.AddConstant(MakeJitConstant("AXIS_LAYOUT_INDEX", GetCumSumAxisIndex(params)));
+    jits.AddConstant(MakeJitConstant("AXIS_LAYOUT_INDEX", axis_idx));
+
+    if (params.reverse) {
+        const auto& output = params.outputs[0];
+        if (output.is_dynamic()) {
+            const int rank = static_cast<int>(output.LogicalDims().size());
+            auto idx = rank - axis_idx - 1;
+            int shape_info_idx = idx;
+            if (idx >= 2) {
+                shape_info_idx += (static_cast<int>(DataTensor::max_rank()) - rank);
+            }
+
+            size_t num_of_dynamic_inputs = 0;
+            for (auto& input : params.inputs) {
+                if (input.is_dynamic()) {
+                    num_of_dynamic_inputs += 1;
+                }
+            }
+
+            jits.AddConstant(MakeJitConstant("STOP_IND", toShapeInfoString(0, shape_info_idx, true, num_of_dynamic_inputs)));
+        }
+    }
 
     return jits;
 }
 
-KernelsData CumSumKernelRef::GetKernelsData(const Params& params, const optional_params& options) const {
-    return GetCommonKernelsData(params, options);
+KernelsData CumSumKernelRef::GetKernelsData(const Params& params) const {
+    return GetCommonKernelsData(params);
 }
 
-KernelsPriority CumSumKernelRef::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
-    return DONT_USE_IF_HAVE_SOMETHING_ELSE;
+KernelsPriority CumSumKernelRef::GetKernelsPriority(const Params& /*params*/) const {
+    return FORCE_PRIORITY_9;
 }
 }  // namespace kernel_selector

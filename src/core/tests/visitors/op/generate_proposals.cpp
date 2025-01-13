@@ -1,25 +1,24 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
+#include "openvino/op/generate_proposals.hpp"
+
+#include <gtest/gtest.h>
+
 #include <vector>
 
-#include "gtest/gtest.h"
-#include "ngraph/ngraph.hpp"
-#include "ngraph/op/util/attr_types.hpp"
-#include "ngraph/opsets/opset9.hpp"
-#include "util/visitor.hpp"
+#include "visitors/visitors.hpp"
 
 using namespace std;
-using namespace ngraph;
-using ngraph::test::NodeBuilder;
-using ngraph::test::ValueMap;
+using namespace ov;
+using ov::test::NodeBuilder;
 
-using GenerateProposals = opset9::GenerateProposals;
-using Attrs = opset9::GenerateProposals::Attributes;
+using GenerateProposals = ov::op::v9::GenerateProposals;
+using Attrs = ov::op::v9::GenerateProposals::Attributes;
 
 TEST(attributes, generate_proposals) {
-    NodeBuilder::get_ops().register_factory<GenerateProposals>();
+    NodeBuilder::opset().insert<GenerateProposals>();
 
     Attrs attrs;
     attrs.min_size = 0.0f;
@@ -29,10 +28,10 @@ TEST(attributes, generate_proposals) {
     attrs.normalized = true;
     attrs.nms_eta = 1.0f;
 
-    auto im_info = std::make_shared<op::Parameter>(element::f32, Shape{1, 4});
-    auto anchors = std::make_shared<op::Parameter>(element::f32, Shape{200, 336, 3, 4});
-    auto deltas = std::make_shared<op::Parameter>(element::f32, Shape{1, 12, 200, 336});
-    auto scores = std::make_shared<op::Parameter>(element::f32, Shape{1, 3, 200, 336});
+    auto im_info = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{1, 4});
+    auto anchors = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{200, 336, 3, 4});
+    auto deltas = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{1, 12, 200, 336});
+    auto scores = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{1, 3, 200, 336});
 
     auto proposals = std::make_shared<GenerateProposals>(im_info, anchors, deltas, scores, attrs);
 

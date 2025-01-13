@@ -1,53 +1,50 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
 #include <node.h>
-#include <string>
+
 #include <memory>
-#include <vector>
+#include <string>
 #include <tuple>
+#include <vector>
+
+#include "executors/mvn_list.hpp"
 
 namespace ov {
 namespace intel_cpu {
 namespace node {
 
-enum MVNLayoutType {
-    mvn_planar,
-    mvn_block,
-    mvn_by_channel
-};
-
 struct jit_mvn_config_params {
     MVNLayoutType layout;
     bool across_channels;
     bool normalize_variance;
-    InferenceEngine::Precision src_prc;
-    InferenceEngine::Precision dst_prc;
+    ov::element::Type src_prc;
+    ov::element::Type dst_prc;
     int src_data_size;
     int dst_data_size;
-    int C, D, H, W;
 };
 
 struct jit_mvn_call_args {
-    const void *src;
-    void *dst;
-    float *sum;
-    float *mean;
-    float *variance;
-    size_t src_stride;
-    size_t dst_stride;
+    const void* src;
+    void* dst;
+    float* sum;
+    float* mean;
+    float* variance;
     size_t work_amount;
     size_t oc_off;
+    // shape need for shape agnostic kernel passed with each infer.
+    // OC for block layout and nspc per channel, tails for ncsp and nspc across channel.
+    size_t rt_shape_size;
     const void* post_op_data;
 };
 
 struct jit_uni_mvn_mean_variance_kernel {
-    void (*ker_)(const jit_mvn_call_args *);
+    void (*ker_)(const jit_mvn_call_args*);
 
-    void operator()(const jit_mvn_call_args *args) {
+    void operator()(const jit_mvn_call_args* args) {
         assert(ker_);
         ker_(args);
     }
@@ -61,28 +58,31 @@ struct jit_uni_mvn_mean_variance_kernel {
 };
 
 struct jit_uni_mvn_kernel {
-    void (*ker_)(const jit_mvn_call_args *);
+    void (*ker_)(const jit_mvn_call_args*);
 
-    void operator()(const jit_mvn_call_args *args) {
+    void operator()(const jit_mvn_call_args* args) {
         assert(ker_);
         ker_(args);
     }
 
-    explicit jit_uni_mvn_kernel(jit_mvn_config_params jcp, const dnnl_primitive_attr &attr) : ker_(nullptr), jcp_(jcp), attr_(attr) {}
+    explicit jit_uni_mvn_kernel(jit_mvn_config_params jcp, const dnnl_primitive_attr& attr)
+        : ker_(nullptr),
+          jcp_(jcp),
+          attr_(attr) {}
     virtual ~jit_uni_mvn_kernel() {}
 
     virtual void create_ker() = 0;
 
     jit_mvn_config_params jcp_;
-    const dnnl_primitive_attr &attr_;
+    const dnnl_primitive_attr& attr_;
     int optimized_scaleshift_num = 0;
 };
 
 class MVN : public Node {
 public:
-    MVN(const std::shared_ptr<ngraph::Node>& op, const GraphContext::CPtr context);
+    MVN(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr context);
 
-    static bool isSupportedOperation(const std::shared_ptr<const ngraph::Node>& op, std::string& errorMessage) noexcept;
+    static bool isSupportedOperation(const std::shared_ptr<const ov::Node>& op, std::string& errorMessage) noexcept;
     void getSupportedDescriptors() override;
     void initSupportedPrimitiveDescriptors() override;
     bool created() const override;
@@ -103,38 +103,25 @@ public:
     bool canFuse(const NodePtr& node) const override;
     void prepareParams() override;
 
-    // Defines way to add epsilon: inside sqrt or outside.
-    enum MVNEpsMode {
-        INSIDE_SQRT,
-        OUTSIDE_SQRT
-    };
-
-    struct MVNAttrs {
-        MVNLayoutType layout;
-        std::tuple<size_t, size_t, size_t, size_t, size_t> shape5D;
-        bool initAcrossChannels_;
-        bool execAcrossChannels_;
-        bool normalizeVariance_;
-        float epsValue_;
-        MVNEpsMode epsMode_;
-        InferenceEngine::Precision src_prc;
-        InferenceEngine::Precision dst_prc;
-    };
-
 private:
-    void setPostOps(dnnl::primitive_attr &attr, bool initWeights = false);
+    void setPostOps(dnnl::primitive_attr& attr, bool initWeights = false);
 
-    void transformTo5DCase(const InferenceEngine::SizeVector& shape);
+    void transformTo5DCase(const VectorDims& shape);
 
     std::vector<const void*> postOpsDataPtrs;
 
     MVNAttrs mvnAttrs;
+    VectorDims shape5D = {0, 0, 0, 0, 0};
+    bool onlyUnaryPostOps = true;
 
-    class MVNExecutor {
+    class MVNExecutorBase {
     public:
-        MVNExecutor(const MVNAttrs& mvnAttrs);
-        virtual void exec(const uint8_t *in_ptr_, uint8_t *out_ptr_, const void *post_ops_data_) = 0;
-        virtual ~MVNExecutor() = default;
+        MVNExecutorBase(const MVNAttrs& mvnAttrs);
+        virtual void exec(const uint8_t* in_ptr_,
+                          uint8_t* out_ptr_,
+                          const void* post_ops_data_,
+                          const VectorDims& shape5d) = 0;
+        virtual ~MVNExecutorBase() = default;
 
     protected:
         MVNAttrs mvnAttrs;
@@ -142,36 +129,43 @@ private:
         size_t dst_data_size = 0;
     };
 
-    std::shared_ptr<MVNExecutor> execPtr = nullptr;
+    std::shared_ptr<MVNExecutorBase> execPtr = nullptr;
+    bool canUseAclExecutor = false;
+    std::shared_ptr<MVNExecutor> aclExecPtr = nullptr;
 
-    class MVNJitExecutor : public MVNExecutor {
-        public:
-            MVNJitExecutor(const MVNAttrs& mvnAttrs,
-                           const dnnl::primitive_attr &attr);
+    class MVNJitExecutor : public MVNExecutorBase {
+    public:
+        MVNJitExecutor(const MVNAttrs& mvnAttrs, const dnnl::primitive_attr& attr);
 
-            void exec(const uint8_t *in_ptr_, uint8_t *out_ptr_, const void *post_ops_data_) override;
+        void exec(const uint8_t* in_ptr_,
+                  uint8_t* out_ptr_,
+                  const void* post_ops_data_,
+                  const VectorDims& shape5d) override;
 
-        private:
-            void mvn_pln(const uint8_t *in_ptr_, uint8_t *out_ptr_, const void *post_ops_data_);
-            void mvn_blk(const uint8_t *in_ptr_, uint8_t *out_ptr_, const void *post_ops_data_);
-            void mvn_nspc(const uint8_t *in_ptr_, uint8_t *out_ptr_, const void *post_ops_data_);
+    private:
+        void mvn_pln(const uint8_t* in_ptr_, uint8_t* out_ptr_, const void* post_ops_data_, const VectorDims& shape5d);
+        void mvn_blk(const uint8_t* in_ptr_, uint8_t* out_ptr_, const void* post_ops_data_, const VectorDims& shape5d);
+        void mvn_nspc(const uint8_t* in_ptr_, uint8_t* out_ptr_, const void* post_ops_data_, const VectorDims& shape5d);
 
-            std::shared_ptr<jit_uni_mvn_mean_variance_kernel> mvn_mean_kernel;
-            std::shared_ptr<jit_uni_mvn_mean_variance_kernel> mvn_variance_kernel;
-            std::shared_ptr<jit_uni_mvn_kernel> mvn_kernel;
+        std::shared_ptr<jit_uni_mvn_mean_variance_kernel> mvn_mean_kernel;
+        std::shared_ptr<jit_uni_mvn_mean_variance_kernel> mvn_variance_kernel;
+        std::shared_ptr<jit_uni_mvn_kernel> mvn_kernel;
     };
 
-    class MVNRefExecutor : public MVNExecutor {
-        public:
-            MVNRefExecutor(const MVNAttrs& mvnAttrs);
+    class MVNRefExecutor : public MVNExecutorBase {
+    public:
+        MVNRefExecutor(const MVNAttrs& mvnAttrs);
 
-            void exec(const uint8_t *in_ptr_, uint8_t *out_ptr_, const void *post_ops_data_) override;
+        void exec(const uint8_t* in_ptr_,
+                  uint8_t* out_ptr_,
+                  const void* post_ops_data_,
+                  const VectorDims& shape5d) override;
 
-        private:
-            void mvn_ref(const uint8_t *in_ptr_, uint8_t *out_ptr_);
+    private:
+        void mvn_ref(const uint8_t* in_ptr_, uint8_t* out_ptr_, const VectorDims& shape5d);
     };
 };
 
-}   // namespace node
-}   // namespace intel_cpu
-}   // namespace ov
+}  // namespace node
+}  // namespace intel_cpu
+}  // namespace ov

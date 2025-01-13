@@ -1,33 +1,15 @@
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 #
 
 set(TARGET_NAME ov_inference_functional_tests)
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-    ie_add_compiler_flags(/wd4244)
-    ie_add_compiler_flags(/wd4267)
-    ie_add_compiler_flags(/wd4305)
-    ie_add_compiler_flags(/wd4018)
-    ie_add_compiler_flags(/wd4050)
-    ie_add_compiler_flags(/wd4250)
-    ie_add_compiler_flags(/wd4334)
-    ie_add_compiler_flags(/wd4661)
-    ie_add_compiler_flags(/wd4273)
-    ie_add_compiler_flags(/wd4309)
-    ie_add_compiler_flags(/wd4804)
-endif()
-if(NOT MSVC)
-    ie_add_compiler_flags(-Wno-missing-declarations)
-    ie_add_compiler_flags(-Wno-sign-compare)
-    ie_add_compiler_flags(-Wno-odr)
-    ie_add_compiler_flags(-Wno-all)
-    ie_add_compiler_flags(-Wno-suggest-override)
+if(SUGGEST_OVERRIDE_SUPPORTED)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-suggest-override")
 endif()
 
 set(DEPENDENCIES
     mock_engine
-    template_extension
     openvino_template_extension
 )
 
@@ -53,6 +35,9 @@ if(ENABLE_AUTO_BATCH)
     list(APPEND COMPILE_DEFINITIONS ENABLE_AUTO_BATCH)
 endif()
 
+if(ENABLE_PROXY)
+    list(APPEND COMPILE_DEFINITIONS PROXY_PLUGIN_ENABLED)
+endif()
 
 ov_add_test_target(
         NAME ${TARGET_NAME}
@@ -61,16 +46,16 @@ ov_add_test_target(
             ${DEPENDENCIES}
         LINK_LIBRARIES
             gmock
-            funcTestUtils
+            func_test_utils
+        DEFINES
+            ${COMPILE_DEFINITIONS}
         INCLUDES
-            $<TARGET_PROPERTY:inference_engine_obj,SOURCE_DIR>/src
+            $<TARGET_PROPERTY:openvino_runtime_obj,SOURCE_DIR>/src
+            $<$<TARGET_EXISTS:openvino_proxy_plugin_obj>:$<TARGET_PROPERTY:openvino_proxy_plugin_obj,INTERFACE_INCLUDE_DIRECTORIES>>
+            ${CMAKE_CURRENT_SOURCE_DIR}
         ADD_CLANG_FORMAT
         LABELS
-            OV
+            OV UNIT RUNTIME
 )
 
-add_compile_definitions(${TARGET_NAME} ${COMPILE_DEFINITIONS})
-
-set(legacy_tests "${CMAKE_CURRENT_SOURCE_DIR}/cnn_ngraph_impl_tests.cpp") #CVS-55375
-set_source_files_properties(${legacy_tests} PROPERTIES INCLUDE_DIRECTORIES
-    $<TARGET_PROPERTY:inference_engine_legacy,INTERFACE_INCLUDE_DIRECTORIES>)
+ov_set_threading_interface_for(${TARGET_NAME})

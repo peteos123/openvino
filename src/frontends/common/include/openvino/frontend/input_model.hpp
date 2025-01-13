@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -10,11 +10,13 @@
 
 #include "openvino/core/partial_shape.hpp"
 #include "openvino/core/type/element_type.hpp"
+#include "openvino/frontend/graph_iterator.hpp"
 #include "openvino/frontend/place.hpp"
 #include "openvino/frontend/visibility.hpp"
 
 namespace ov {
 namespace frontend {
+class FrontEnd;
 /// \brief InputModel class represents an original, not yet converted model graph in a
 /// framework format given services to find places of interest in a graph or specialize/edit
 /// the model before conversion.
@@ -38,7 +40,7 @@ namespace frontend {
 class FRONTEND_API InputModel {
     std::shared_ptr<void> m_shared_object;
     std::shared_ptr<InputModel> m_actual;
-    friend class FrontEnd;
+    friend class ::ov::frontend::FrontEnd;
 
 public:
     using Ptr = std::shared_ptr<InputModel>;
@@ -79,6 +81,11 @@ public:
     /// \param tensor_name Name of tensor
     /// \return Tensor place corresponding to specified tensor name or nullptr if not exists
     virtual Place::Ptr get_place_by_tensor_name(const std::string& tensor_name) const;
+
+    /// \brief Returns a tensor place by an input index.
+    /// \param input_idx Index of model input
+    /// \return Tensor place corresponding to specified input index or nullptr
+    virtual Place::Ptr get_place_by_input_index(size_t input_idx) const;
 
     /// \brief Returns an operation place by an operation name following framework
     /// conventions, or nullptr if an operation with this name doesn't exist.

@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -180,9 +180,9 @@ const float sum_scale = 1;
 
 #if USE_IMAGE == 1
                         float8 blockB00 = as_float8(
-                                _sub_group_block_read8(wei, coordB0));
+                                intel_sub_group_block_read8(wei, coordB0));
                         float8 blockB01 = as_float8(
-                                _sub_group_block_read8(wei, coordB1));
+                                intel_sub_group_block_read8(wei, coordB1));
 #else
         float8 blockB00 = as_float8(
                 _sub_group_block_read8((const __global uint *)wei1));
@@ -476,10 +476,16 @@ const float sum_scale = 1;
 #if OW % OW_BLOCK != 0
     if (ow + OW_BLOCK > OW) {
         for (int i = 0; i < OW - OW_LAST; i++) {
+#if HAS_FUSED_OPS
+            { FUSED_OPS_SCALAR0; blockC00[i] = FUSED_OPS_RESULT_SCALAR0; }
+#endif
             _sub_group_block_write((__global unsigned int *)(&dst_write0[i
                                                 * OC_BLOCK * MB_BLOCK]),
                     as_uint(blockC00[i]));
 #if OCB == 32
+#if HAS_FUSED_OPS
+            { FUSED_OPS_SCALAR1; blockC01[i] = FUSED_OPS_RESULT_SCALAR1; }
+#endif
             _sub_group_block_write(
                     (__global unsigned int
                                     *)(&dst_write0[i * OC_BLOCK * MB_BLOCK
@@ -492,10 +498,16 @@ const float sum_scale = 1;
 #if OW_BLOCK != 8 || MB_BLOCK != 1
         __attribute__((opencl_unroll_hint(OW_BLOCK))) // attr:no-format
         for (int i = 0; i < OW_BLOCK; i++) {
+#if HAS_FUSED_OPS
+            { FUSED_OPS_SCALAR0; blockC00[i] = FUSED_OPS_RESULT_SCALAR0; }
+#endif
             _sub_group_block_write((__global unsigned int *)(&dst_write0[i
                                                 * OC_BLOCK * MB_BLOCK]),
                     as_uint(blockC00[i]));
 #if OCB == 32
+#if HAS_FUSED_OPS
+            { FUSED_OPS_SCALAR1; blockC01[i] = FUSED_OPS_RESULT_SCALAR1; }
+#endif
             _sub_group_block_write(
                     (__global unsigned int
                                     *)(&dst_write0[i * OC_BLOCK * MB_BLOCK
@@ -504,9 +516,15 @@ const float sum_scale = 1;
 #endif
         }
 #else
+#if HAS_FUSED_OPS
+    { FUSED_OPS_VEC0; blockC00 = FUSED_OPS_RESULT_VEC0; }
+#endif
     _sub_group_block_write8(
             (__global unsigned int *)(&dst_write0[0]), as_uint8(blockC00));
 #if OCB == 32
+#if HAS_FUSED_OPS
+    { FUSED_OPS_VEC1; blockC01 = FUSED_OPS_RESULT_VEC1; }
+#endif
     _sub_group_block_write8((__global unsigned int *)(&dst_write0[OC_BLOCK
                                          * MB_BLOCK * ODHW_SIZE]),
             as_uint8(blockC01));

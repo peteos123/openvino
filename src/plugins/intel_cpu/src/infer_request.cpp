@@ -1,873 +1,639 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "infer_request.h"
-#include "dnnl_extension_utils.h"
-#include <vector>
-#include <string>
-#include <map>
-#include <blob_factory.hpp>
-#include "nodes/concat.h"
-#include "nodes/split.h"
-#include <ie_compound_blob.h>
-#include <ie_common.h>
-#include "exec_network.h"
-#include "itt.h"
-#include "nodes/common/cpu_convert.h"
-#include "memory_state.h"
-#include "nodes/memory.hpp"
-#include "nodes/common/cpu_memcpy.h"
+
 #include "async_infer_request.h"
-#include <debug.h>
+#include "dnnl_extension_utils.h"
+#include "itt.h"
+#include "memory_desc/cpu_memory_desc_utils.h"
+#include "nodes/common/cpu_convert.h"
+#include "nodes/memory_state_base.h"
+#include "openvino/core/shape.hpp"
+#include "openvino/runtime/make_tensor.hpp"
+#include "openvino/runtime/tensor.hpp"
+#include "openvino/runtime/threading/cpu_message.hpp"
+#include "proxy_mem_blk.h"
 #include "utils/general_utils.h"
-#include "utils/cpu_utils.hpp"
-#include "memory_desc/dnnl_blocked_memory_desc.h"
-#include <transformations/utils/utils.hpp>
-#include <ie_ngraph_utils.hpp>
+#include "utils/ngraph_utils.hpp"
+
+using OvString = ov::element_type_traits<ov::element::string>::value_type;
 
 namespace ov {
 namespace intel_cpu {
+SyncInferRequest::SyncInferRequest(CompiledModelHolder compiled_model)
+    : ov::ISyncInferRequest(compiled_model.compiled_model()),
+      m_compiled_model(std::move(compiled_model)) {
+    const auto& inputs = get_inputs();
+    for (std::size_t input_index = 0; input_index < inputs.size(); input_index++) {
+        m_input_ports_map[input_index] = inputs[input_index];
+    }
 
-void InferRequestBase::CreateInferRequest() {
-    auto id = (execNetwork->_numRequests)++;
-    profilingTask = openvino::itt::handle("INTEL_CPU_INFER_" + execNetwork->_name + "_" + std::to_string(id));
+    const auto& outputs = get_outputs();
+    for (std::size_t output_index = 0; output_index < outputs.size(); output_index++) {
+        m_output_ports_map[output_index] = outputs[output_index];
+    }
+    create_infer_request();
+}
 
-    if (execNetwork->_graphs.size() == 0)
-        IE_THROW() << "No graph was found";
-    graph = &(execNetwork->GetGraph()._graph);
+void SyncInferRequest::create_infer_request() {
+    m_profiling_task = openvino::itt::handle("INTEL_CPU_INFER_" + m_compiled_model.name() + "_" +
+                                             std::to_string(m_compiled_model.id()));
 
-    initBlobs();
+    // Alocate memory for each tensor if static shape
+    for (const auto& it : m_input_ports_map) {
+        init_tensor(it.first, ov::ISyncInferRequest::FoundPort::Type::INPUT);
+    }
+    for (const auto& it : m_output_ports_map) {
+        init_tensor(it.first, ov::ISyncInferRequest::FoundPort::Type::OUTPUT);
+    }
 
-    // Save all MemoryLayer data tensors. Will use insight about mechanics
-    // of MemoryLayer implementation. It uses output edge of MemoryLayer
-    // producer as storage for tensor to keep it between infer calls.
-    for (auto& node : graph->GetNodes()) {
-        if (node->getType() == Type::MemoryInput) {
-            auto memoryNode = dynamic_cast<node::MemoryInput*>(node.get());
-            if (!memoryNode) {
-                IE_THROW() << "Cannot cast " << node->getName() << " to MemoryInput";
-            }
-            auto state_store = memoryNode->getStore();
-            auto state_name = memoryNode->getId();
+    // create states according to the list of the MemoryStateNodes
+    m_memory_states = m_compiled_model.graph().memoryStates();
+}
 
-            // Remove suffix with pair ID. Internal information.
-            auto suffix_idx = state_name.find("/id=");
-            if (suffix_idx != std::string::npos)
-                state_name = state_name.substr(0, suffix_idx);
-
-            memoryStates.emplace_back(new VariableState(state_name, state_store));
+void SyncInferRequest::redefine_memory_for_input_nodes(Graph& graph) {
+    for (const auto& input_port : m_input_ports_map) {
+        auto inputNode = graph.getInputNodeByIndex(input_port.first);
+        OPENVINO_ASSERT(inputNode, "CPU execution graph doesn't contain output node with index: ", input_port.first);
+        if (inputNode->isDynamicNode()) {
+            auto tensor = get_tensor(input_port.second);
+            inputNode->redefineOutputMemory({tensor->get_shape()});
         }
     }
 }
 
-InferRequestBase::~InferRequestBase() {
-    --(execNetwork->_numRequests);
-}
-
-void InferRequestBase::pushInput(const std::string& inputName, InferenceEngine::Blob::Ptr& inputBlob, InferenceEngine::Precision inPrec) {
-    auto& tensorDesc = inputBlob->getTensorDesc();
-    bool needConvert = inPrec != tensorDesc.getPrecision();
-
-    const void* srcData = inputBlob->cbuffer().as<const void *>();
-    if (srcData == nullptr) {
-        IE_THROW() << "Input blob has no allocated memory";
-    }
-
-    InferenceEngine::Blob::Ptr iconv;
-    if (needConvert) {
-        iconv = make_blob_with_precision(inPrec, InferenceEngine::TensorDesc(inPrec, tensorDesc.getDims(), tensorDesc.getLayout()));
-        iconv->allocate();
-        if (inputBlob->size() != iconv->size())
-            IE_THROW() << "Can't copy tensor: input and converted tensors have different number of elements: " << inputBlob->size() << " and "
-                               << iconv->size();
-
-        void *dstData = iconv->buffer().as<void *>();
-        if (dstData == nullptr) {
-            IE_THROW() << "Converted input blob has no allocated memory";
-        }
-        cpu_convert(srcData, dstData, tensorDesc.getPrecision(), iconv->getTensorDesc().getPrecision(), iconv->size());
-    }
-
-    graph->PushInputData(inputName, needConvert ? iconv : inputBlob);
-}
-
-void InferRequestBase::PushStates() {
-    for (auto &node : graph->GetNodes()) {
-        if (node->getType() == Type::MemoryInput) {
-            auto cur_node = dynamic_cast<node::MemoryInput*>(node.get());
-            if (!cur_node) {
-                IE_THROW() << "Cannot cast " << node->getName() << " to MemoryInput";
-            }
-            auto cur_id = cur_node->getId();
-            for (const auto& state : memoryStates) {
-                if (state->GetName() == cur_id) {
-                    auto cur_state_mem = cur_node->getStore();
-                    auto data_ptr = state->GetState()->cbuffer().as<void*>();
-                    auto data_size = state->GetState()->byteSize();
-                    auto cur_state_mem_buf = static_cast<uint8_t*>(cur_state_mem->GetPtr());
-
-                    cpu_memcpy(cur_state_mem_buf, data_ptr, data_size);
-                }
-            }
+void SyncInferRequest::update_external_tensor_ptrs() {
+    // Update it due to batched_tensors case will update input tensor
+    for (auto input : m_input_ports_map) {
+        if (m_input_external_ptr.find(input.first) != m_input_external_ptr.end()) {
+            auto tensor = get_tensor(input.second);
+            m_input_external_ptr[input.first] = tensor;
         }
     }
 }
 
-void InferRequestBase::PullStates() {
-    for (auto &node : graph->GetNodes()) {
-        if (node->getType() == Type::MemoryInput) {
-            auto cur_node = dynamic_cast<node::MemoryInput*>(node.get());
-            if (!cur_node) {
-                IE_THROW() << "Cannot cast " << node->getName() << " to MemoryInput";
-            }
-            auto cur_id = cur_node->getId();
-            for (const auto& state : memoryStates) {
-                if (state->GetName() == cur_id) {
-                    auto cur_state_mem = cur_node->getStore();
-                    auto data_ptr = state->GetState()->cbuffer().as<void*>();
-                    auto data_size = state->GetState()->byteSize();
-                    auto cur_state_mem_buf = static_cast<uint8_t*>(cur_state_mem->GetPtr());
-
-                    cpu_memcpy(data_ptr, cur_state_mem_buf, data_size);
-                }
-            }
-        }
-    }
-}
-
-void InferRequestBase::redefineMemoryForInputNodes() {
-    const auto cpuInputNodes = graph->GetInputNodesMap();
-
-    for (const auto &blob : _inputs) {
-        const auto inputNode = cpuInputNodes.find(blob.first);
-        if (inputNode == cpuInputNodes.end())
-            IE_THROW() << "CPU execution graph doesn't contain input node with name: " << blob.first;
-        if (inputNode->second->isDynamicNode()) {
-            inputNode->second->redefineOutputMemory({blob.second->getTensorDesc().getDims()});
-        }
-    }
-}
-
-void InferRequestBase::InferImpl() {
+void SyncInferRequest::infer() {
     using namespace openvino::itt;
-    OV_ITT_SCOPED_TASK(itt::domains::intel_cpu, profilingTask);
-    auto graphLock = execNetwork->GetGraph();
-    graph = &(graphLock._graph);
+    OV_ITT_SCOPED_TASK(itt::domains::intel_cpu, m_profiling_task);
+    auto graphLock = m_compiled_model.lock();
+    auto&& graph = graphLock._graph;
+    auto message = ov::threading::message_manager();
 
-    ThrowIfCanceled();
-    convertBatchedInputBlobs();
-
-    if (graph->hasDynamicInput()) {
-        redefineMemoryForInputNodes();
-    } else if (graph->getConfig().isNewApi && graph->getConfig().batchLimit > 0) {
-        const auto batch = _inputs.begin()->second->getTensorDesc().getDims()[0];
-        SetBatch(batch);
+    throw_if_canceled();
+    if (m_asyncRequest->m_has_sub_infers) {
+        sub_streams_infer();
+        message->server_wait();
+        return;
     }
 
-    execDataPreprocessing(_inputs);
-
-    changeDefaultPtr();
-
-    ThrowIfCanceled();
-
-    PushInputData();
-
-    if (memoryStates.size() != 0) {
-        PushStates();
+    convert_batched_tensors();
+    if (m_batched_tensors.size() > 0) {
+        // batched_tensors will be updated for each infer, external_ptr should be update together
+        update_external_tensor_ptrs();
     }
 
-    graph->Infer(this);
-
-    if (memoryStates.size() != 0) {
-        PullStates();
+    if (graph.hasDynamicInput()) {
+        redefine_memory_for_input_nodes(graph);
     }
 
-    ThrowIfCanceled();
+    change_default_ptr(graph);
 
-    graph->PullOutputData(_outputs);
+    throw_if_canceled();
+
+    // state -> node
+    if (!m_memory_states.empty()) {
+        graph.assignStates(m_memory_states);
+    }
+
+    push_input_data(graph);
+
+    graph.Infer(this);
+
+    throw_if_canceled();
+
+    // update output control blocks, if any, in order to refresh internal buffers
+    if (graph.IsDynamic()) {
+        for (auto&& item : m_outputControlBlocks) {
+            item.second.update();
+        }
+    }
+
+    graph.PullOutputData(m_outputs);
 }
 
-std::map<std::string, InferenceEngine::InferenceEngineProfileInfo> InferRequestBase::GetPerformanceCounts() const {
-    if (!graph || !graph->IsReady())
-        IE_THROW() << "Graph is not ready!";
-    std::map<std::string, InferenceEngine::InferenceEngineProfileInfo> perfMap;
-    graph->GetPerfData(perfMap);
+std::vector<ov::ProfilingInfo> SyncInferRequest::get_profiling_info() const {
+    auto&& graph = m_compiled_model.graph();
+    if (!graph.IsReady())
+        OPENVINO_THROW("Graph is not ready!");
+    std::vector<ov::ProfilingInfo> perfMap;
+    graph.GetPerfData(perfMap);
     return perfMap;
 }
 
-static inline void changeEdgePtr(const EdgePtr &edge, void *newPtr) {
-    edge->getMemoryPtr()->setDataHandle(newPtr);
-}
+static inline void change_edge_ptr(const EdgePtr& edge, ov::SoPtr<ov::ITensor>& tensor) {
+    auto mem = edge->getMemoryPtr();
+    OPENVINO_ASSERT(mem != nullptr, "Edge with name '", *edge, "' doesn't have allocated memory object.");
 
-void InferRequestBase::changeDefaultPtr() {
-    for (auto& it : externalPtr) {
-        const auto& inputNodesMap = graph->GetInputNodesMap();
-        auto input = inputNodesMap.find(it.first);
-        if (input != inputNodesMap.end()) {
-            NodePtr inputNodePtr = input->second;
-            if (inputNodePtr->getChildEdgeAt(0)->getMemory().GetData() == it.second)
-                continue;
-            auto& childEdges = inputNodePtr->getChildEdges();
-            // Input cannot be in-place with other primitives
-            bool canBeInPlace = true;
-            for (auto& childEdge : childEdges) {
-                auto ce = childEdge.lock();
-                if (!ce)
-                    IE_THROW() << "Node " << inputNodePtr->getName() << " contains empty child edge";
-
-                auto& child = ce->getChild();
-
-                if (child->isConstant()) {
-                    canBeInPlace = false;
-                    break;
-                }
-
-                if (child->getType() == Type::Concatenation) {
-                    auto concat = dynamic_cast<node::Concat*>(child.get());
-                    if (concat && concat->isOptimized()) {
-                        canBeInPlace = false;
-                        break;
-                    }
-                }
-
-                // Cannot be in-place before split because split is using different ptrs without offsets
-                if (child->getType() == Type::Split) {
-                    canBeInPlace = false;
-                    break;
-                }
-
-                if (child->isInPlace()) {
-                    canBeInPlace = false;
-                    break;
-                }
-
-                auto& edges = child->getChildEdges();
-                for (auto& edge : edges) {
-                    auto e = edge.lock();
-                    if (!e)
-                        IE_THROW() << "Node " << child->getName() << " contains empty child edge";
-
-                    if (e->getMemory().GetData() == ce->getMemory().GetData()) {
-                        canBeInPlace = false;
-                        break;
-                    }
-                }
-
-                if (!canBeInPlace)
-                    break;
-            }
-            if (canBeInPlace) {
-                for (auto& edge : childEdges) {
-                    auto e = edge.lock();
-                    if (!e)
-                        IE_THROW() << "Node " << inputNodePtr->getName() << " contains empty child edge";
-
-                    changeEdgePtr(e, it.second);
-                }
-            }
-
-            continue;
-        }
-
-        const auto& outputNodesMap = graph->GetOutputNodesMap();
-        auto output = outputNodesMap.find(it.first);
-        if (output != outputNodesMap.end()) {
-            auto parentEdge = output->second->getParentEdgeAt(0);
-            if (parentEdge->getMemory().GetData() == it.second)
-                continue;
-
-            bool canBeInPlace = true;
-            void* defaultPtr = parentEdge->getMemory().GetData();
-            // Cannot be in-place after concat because concat is using different ptrs without offsets
-            auto parent = parentEdge->getParent();
-            NodePtr previousParent;
-            do {
-                previousParent = parent;
-                if (parent->getChildEdges().size() != 1 || parent->isConstant() || parent->isInPlace()) {
-                    canBeInPlace = false;
-                    break;
-                }
-
-                auto& parentEdges = parent->getParentEdges();
-                for (auto& edge : parentEdges) {
-                    auto e = edge.lock();
-                    if (!e)
-                        IE_THROW() << "Node " << parent->getName() << " contains empty parent edge";
-
-                    if (e->getMemory().GetData() == defaultPtr) {
-                        parent = e->getParent();
-                        break;
-                    }
-                }
-            } while (previousParent != parent);
-            if (canBeInPlace)
-                changeEdgePtr(parentEdge, it.second);
-            continue;
-        }
-        IE_THROW() << "Cannot find input/output blob: " << it.first;
-    }
-}
-
-std::vector<InferenceEngine::IVariableStateInternal::Ptr> InferRequestBase::QueryState() {
-    return memoryStates;
-}
-
-void InferRequestBase::SetAsyncRequest(AsyncInferRequest* asyncRequest) {
-    _asyncRequest = asyncRequest;
-}
-
-void InferRequestBase::ThrowIfCanceled() const {
-    if (_asyncRequest != nullptr) {
-        _asyncRequest->ThrowIfCanceled();
-    }
-}
-
-InferenceEngine::Precision
-InferRequestBase::normToInputSupportedPrec(const std::pair<const std::string, InferenceEngine::Blob::Ptr>& input) const {
-    const auto& inputTensorDesc = input.second->getTensorDesc();
-    auto inPrec = inputTensorDesc.getPrecision();
-    if (graph->hasMeanImageFor(input.first) && one_of(inPrec, InferenceEngine::Precision::U8, InferenceEngine::Precision::BOOL)) {
-        inPrec = InferenceEngine::Precision::FP32;
+    if (tensor->get_element_type() == element::string) {
+        auto memBlock = dynamic_cast<StringMemory*>(mem.get())->getStringMemoryBlockPtr();
+        OPENVINO_ASSERT(memBlock);
+        memBlock->setExtBuff(tensor->data<StringMemory::OvString>(), tensor->get_size());
     } else {
-        inPrec = normalizeToSupportedPrecision(inPrec);
-    }
-
-    if (inPrec == InferenceEngine::Precision::UNSPECIFIED) {
-        IE_THROW() << "Unsupported input precision " << inputTensorDesc.getPrecision();
-    }
-
-    return inPrec;
-}
-
-/* ========================================== LegacyInferRequest ========================================== */
-LegacyInferRequest::LegacyInferRequest(InferenceEngine::InputsDataMap networkInputs,
-                                       InferenceEngine::OutputsDataMap networkOutputs,
-                                       std::shared_ptr<ExecNetwork> execNetwork)
-    : InferRequestBase(networkInputs, networkOutputs, execNetwork) {
-    CreateInferRequest();
-}
-
-void LegacyInferRequest::initBlobs() {
-    for (const auto& it : _networkInputs) {
-        LegacyInferRequest::GetBlob(it.first);
-    }
-    for (const auto& it : _networkOutputs) {
-        LegacyInferRequest::GetBlob(it.first);
+        auto memBlock = mem->getMemoryBlock();
+        OPENVINO_ASSERT(memBlock);
+        memBlock->setExtBuff(tensor->data(), tensor->get_byte_size());
     }
 }
 
-void LegacyInferRequest::SetBatch(int new_batch) {
-    if (!graph->getConfig().enableDynamicBatch)
-        IE_THROW() << "Dynamic batch is not enabled.";
-
-    if (new_batch < 1 || new_batch > graph->getConfig().batchLimit) {
-        IE_THROW() << "Invalid dynamic batch size " << new_batch <<
-            " for this request.";
+void SyncInferRequest::change_default_ptr(Graph& graph) {
+    std::unordered_set<const void*> inputPtrs;
+    std::function<void(const EdgePtr& edge, ov::SoPtr<ov::ITensor>& tensor)> changeInpPtr;
+    if (graph.IsDynamic()) {
+        changeInpPtr = [&inputPtrs](const EdgePtr& edge, ov::SoPtr<ov::ITensor>& tensor) {
+            change_edge_ptr(edge, tensor);
+            inputPtrs.insert(tensor->data());
+        };
+    } else {
+        changeInpPtr = [](const EdgePtr& edge, ov::SoPtr<ov::ITensor>& tensor) {
+            change_edge_ptr(edge, tensor);
+        };
     }
 
-    m_curBatch = new_batch;
+    for (auto& it : m_input_external_ptr) {
+        auto inputNodePtr = graph.getInputNodeByIndex(it.first);
+        OPENVINO_ASSERT(inputNodePtr, "Cannot find input tensor with index: ", it.first);
+        if (inputNodePtr->getDstDataAtPort(0) == static_cast<void*>(it.second->data()))
+            continue;
+        auto& childEdges = inputNodePtr->getChildEdges();
+        // Perform checks that the user's memory will not be modified
+        bool canBeInPlace = true;
+        for (auto& childEdge : childEdges) {
+            auto ce = childEdge.lock();
+            if (!ce)
+                OPENVINO_THROW("Node ", inputNodePtr->getName(), " contains empty child edge");
 
-    for (const auto& node : graph->GetNodes()) {
-        node->setDynamicBatchLim(new_batch);
-    }
-}
+            auto& child = ce->getChild();
 
-void LegacyInferRequest::SetBlob(const std::string& name, const InferenceEngine::Blob::Ptr &data) {
-    OV_ITT_SCOPED_TASK(itt::domains::intel_cpu, "SetBlobLegacy");
-    if (name.empty()) {
-        IE_THROW(NotFound) << "Failed to set blob with empty name";
-    }
-
-    if (!data)
-        IE_THROW(NotAllocated) << "Failed to set empty blob with name: \'" << name << "\'";
-    const bool compoundBlobPassed = data->is<InferenceEngine::CompoundBlob>();
-    if (!compoundBlobPassed && data->buffer() == nullptr)
-        IE_THROW(NotAllocated) << "Input data was not allocated. Input name: \'" << name << "\'";
-    if (data->size() == 0) {
-        IE_THROW() << "Input data is empty. Input name: \'" << name << "\'";
-    }
-
-    InferenceEngine::InputInfo::Ptr foundInput;
-    InferenceEngine::DataPtr foundOutput;
-    size_t dataSize = data->size();
-    findInputAndOutputBlobByName(name, foundInput, foundOutput);
-
-    if (foundInput) {
-        if (foundInput->getPrecision() != data->getTensorDesc().getPrecision()) {
-            IE_THROW(ParameterMismatch) << "Failed to set input blob with precision: "
-                               << data->getTensorDesc().getPrecision() << ", if CNNNetwork input blob precision is: " << foundInput->getPrecision();
-        }
-
-        const bool preProcRequired = preProcessingRequired(foundInput, data);
-        if (compoundBlobPassed && !preProcRequired) {
-            IE_THROW(NotImplemented)
-                               << "cannot set compound blob: supported only for input pre-processing";
-        }
-
-        if (preProcRequired) {
-            if (_preProcData.find(name) == _preProcData.end()) {
-                _preProcData.emplace(name, InferenceEngine::CreatePreprocDataHelper());
-            }
-            _preProcData[name]->isApplicable(data, _inputs[name]);
-            // Stores the given blob as ROI blob. It will be used to fill in network input during
-            // pre-processing
-            _preProcData[name]->setRoiBlob(data);
-        } else {
-            size_t inputSize = foundInput->getTensorDesc().getLayout() != InferenceEngine::Layout::SCALAR
-                ? InferenceEngine::details::product(foundInput->getTensorDesc().getDims())
-                : 1;
-            if (dataSize != inputSize) {
-                IE_THROW() << "Input blob size is not equal network input size ("
-                                   << dataSize << "!=" << inputSize << ").";
+            if (child->isConstant()) {
+                canBeInPlace = false;
+                break;
             }
 
-            if (foundInput->getTensorDesc().getDims() != data->getTensorDesc().getDims()) {
-                IE_THROW(ParameterMismatch) << "Failed to set input blob. Dimensions mismatch.";
+            // the input memory should be referenced by the children, otherwise it should be written to a
+            // specific location
+            if (ce->inPlace(Edge::LOOK_DOWN)) {
+                canBeInPlace = false;
+                break;
             }
 
-            if (data->getTensorDesc().getLayout() != InferenceEngine::Layout::ANY && foundInput->getTensorDesc().getLayout() != InferenceEngine::Layout::ANY &&
-                foundInput->getTensorDesc().getBlockingDesc() != data->getTensorDesc().getBlockingDesc()) {
-                IE_THROW(ParameterMismatch) << "Failed to set input blob. Blocking descriptor mismatch.";
+            if (auto result = ce->modifiedInPlace()) {
+                canBeInPlace = false;
+                break;
             }
 
-            auto pBlobDesc = MemoryDescUtils::interpretAsBlobDesc(graph->getInputNodeByName(name)->getChildEdgesAtPort(0)[0]->getMemory());
-            if (data->getTensorDesc() == pBlobDesc &&
-                graph->_normalizePreprocMap.find(name) == graph->_normalizePreprocMap.end() && !graph->getConfig().batchLimit) {
-                externalPtr[name] = data->buffer();
-            } else if (externalPtr.find(name) != externalPtr.end()) {
-                externalPtr.erase(name);
-            }
-            _inputs[name] = data;
-        }
-    }
-    if (foundOutput) {
-        if (compoundBlobPassed) {
-            IE_THROW(NotImplemented)
-                               << "cannot set compound blob: supported only for input pre-processing";
-        }
-        if (foundOutput->getPrecision() != data->getTensorDesc().getPrecision()) {
-            IE_THROW(ParameterMismatch) << "Failed to set output blob with precision: "
-                               << data->getTensorDesc().getPrecision() << ", if CNNNetwork output blob precision is: " << foundOutput->getPrecision();
-        }
-        size_t outputSize = foundOutput->getTensorDesc().getLayout() != InferenceEngine::Layout::SCALAR
-            ? InferenceEngine::details::product(foundOutput->getDims())
-            : 1;
-        if (dataSize != outputSize) {
-            IE_THROW() << "Output blob size is not equal network output size ("
-                               << dataSize << "!=" << outputSize << ").";
-        }
-        if (foundOutput->getTensorDesc().getDims() != data->getTensorDesc().getDims()) {
-            IE_THROW(ParameterMismatch) << "Failed to set output Blob. Dimensions mismatch.";
-        }
-        if (data->getTensorDesc().getLayout() != InferenceEngine::Layout::ANY && foundOutput->getTensorDesc().getLayout() != InferenceEngine::Layout::ANY &&
-            foundOutput->getTensorDesc().getBlockingDesc() != data->getTensorDesc().getBlockingDesc()) {
-                IE_THROW(ParameterMismatch) << "Failed to set output blob. Blocking descriptor mismatch.";
-        }
-
-        auto pBlobDesc = MemoryDescUtils::interpretAsBlobDesc(graph->getOutputNodeByName(name)->getParentEdgesAtPort(0)[0]->getMemory());
-        if (data->getTensorDesc() == pBlobDesc &&
-                !graph->getConfig().batchLimit) {
-            externalPtr[name] = data->buffer();
-        } else if (externalPtr.find(name) != externalPtr.end()) {
-            externalPtr.erase(name);
-        }
-        _outputs[name] = data;
-    }
-}
-
-InferenceEngine::Blob::Ptr LegacyInferRequest::GetBlob(const std::string& name) {
-    OV_ITT_SCOPED_TASK(itt::domains::intel_cpu, "GetBlobLegacy");
-
-    if (!graph || !graph->IsReady())
-        IE_THROW() << "Graph is not ready!";
-
-    InferenceEngine::Blob::Ptr data;
-
-    const auto &inMap = graph->inputNodesMap;
-    auto input = inMap.find(name);
-    if (input != inMap.end()) {
-        // ROI blob is returned only if it was set previously.
-        auto it = _preProcData.find(name);
-        if (it != _preProcData.end()) {
-            data = it->second->getRoiBlob();
-            return data;
-        }
-
-        if (_inputs.find(name) == _inputs.end()) {
-            auto pBlobDesc = MemoryDescUtils::interpretAsBlobDesc(graph->getInputNodeByName(name)->getChildEdgesAtPort(0)[0]->getMemory());
-            InferenceEngine::TensorDesc desc = pBlobDesc;
-
-            if (_networkInputs.find(name) != _networkInputs.end()) {
-                InferenceEngine::Layout l = _networkInputs[name]->getLayout();
-                InferenceEngine::Precision p = _networkInputs[name]->getPrecision();
-                InferenceEngine::SizeVector dims = _networkInputs[name]->getTensorDesc().getDims();
-
-                desc = InferenceEngine::TensorDesc(p, dims, l);
-            }
-
-            _inputs[name] = make_blob_with_precision(desc);
-            _inputs[name]->allocate();
-            if (pBlobDesc == desc &&
-                graph->_normalizePreprocMap.find(name) == graph->_normalizePreprocMap.end() && !graph->getConfig().batchLimit) {
-                externalPtr[name] = _inputs[name]->buffer();
+            if (child->getType() == Type::Concatenation && child->isInPlace()) {
+                canBeInPlace = false;
+                break;
             }
         }
-        data = _inputs[name];
-        checkBlob(data, name, true);
-        // check if preprocess required, but still wasn't set
-        auto preProcessedInput = std::find_if(std::begin(_networkInputs), std::end(_networkInputs),
-            [&](const std::pair<std::string, InferenceEngine::InputInfo::Ptr>& pair) {
-                return pair.first == name;
-            });
-        if (preProcessedInput != std::end(_networkInputs)) {
-            InferenceEngine::InputInfo::Ptr foundInput;
-            InferenceEngine::DataPtr foundOutput;
-            if (!findInputAndOutputBlobByName(name, foundInput, foundOutput)) {
-                IE_THROW() << "Blob with name: " << name << " absents in network inputs";
-            }
-            if (preProcessingRequired(foundInput, data)) {
-                _preProcData.emplace(name, InferenceEngine::CreatePreprocDataHelper());
-                _preProcData[name]->isApplicable(data, _inputs[name]);
-                _preProcData[name]->setRoiBlob(data);
+        if (canBeInPlace) {
+            for (auto& edge : childEdges) {
+                auto e = edge.lock();
+                if (!e)
+                    OPENVINO_THROW("Node ", inputNodePtr->getName(), " contains empty child edge");
+                changeInpPtr(e, it.second);
             }
         }
     }
 
-    if (graph->hasOutputWithName(name)) {
-        if (_outputs.find(name) == _outputs.end()) {
-            auto pBlobDesc = MemoryDescUtils::interpretAsBlobDesc(graph->getOutputNodeByName(name)->getParentEdgesAtPort(0)[0]->getMemory());
-            if (!data) {
-                InferenceEngine::TensorDesc desc = _networkOutputs[name]->getTensorDesc();
-                desc.setPrecision(normalizeToSupportedPrecision(desc.getPrecision()));
+    for (auto& it : m_output_external_ptr) {
+        auto output = graph.getOutputNodeByIndex(it.first);
+        OPENVINO_ASSERT(output, "Cannot find output tensor with index: ", it.first);
+        auto parentEdge = output->getParentEdgeAt(0);
+        void* const outputRawPtr = parentEdge->getMemory().getData();
+        if (outputRawPtr == static_cast<void*>(it.second->data()))
+            continue;
 
-                // WA: need to avoid exception thrown when we compare blocking desc in SetBlob
-                // in situation if we push output blobs as inputs for next network (in Hetero plugin)
-                // it may be that output tensor desc will be different from real input tensor desc for next network
-                // because the optimal descriptor was chosen (e.g. inPlace case for Split node)
-                auto currBlockDesc = InferenceEngine::BlockingDesc(desc.getBlockingDesc().getBlockDims(), desc.getBlockingDesc().getOrder());
-                desc = InferenceEngine::TensorDesc(desc.getPrecision(), desc.getDims(), currBlockDesc);
+        bool canBeInPlace = true;
+        // Cannot be in-place after concat because concat is using different ptrs without offsets
+        auto parent = parentEdge->getParent();
+        NodePtr previousParent;
+        auto parent_port = parentEdge->getInputNum();
+        do {
+            previousParent = parent;
+            if (parent->getChildEdgesAtPort(parent_port).size() != 1 || parent->isConstant()) {
+                canBeInPlace = false;
+                break;
+            }
+            if (parent->getChildEdgeAt(parent_port)->inPlace(Edge::LOOK_UP)) {
+                canBeInPlace = false;
+                break;
+            }
 
-                data = make_blob_with_precision(desc);
-                data->allocate();
+            auto& parentEdges = parent->getParentEdges();
+            for (auto& edge : parentEdges) {
+                auto e = edge.lock();
+                if (!e)
+                    OPENVINO_THROW("Node ", parent->getName(), " contains empty parent edge");
+
+                if (parent_port == parent->inPlaceInputPort(e->getOutputNum())) {
+                    parent = e->getParent();
+                    parent_port = e->getInputNum();
+                    break;
+                }
+            }
+        } while (previousParent != parent);
+        if (canBeInPlace)
+            change_edge_ptr(parentEdge, it.second);
+    }
+
+    if (graph.IsDynamic()) {
+        const auto& outMemBlocksMap = graph.getOutputNodesMemBlocksMap();
+        for (auto&& item : outMemBlocksMap) {
+            const auto index = item.first;
+
+            // share intel_cpu::Tensor to Graph by injecting to corresponding ProxyMemoryBlock instance.
+            auto outputMemBlock = item.second;
+            OPENVINO_ASSERT(outputMemBlock, "proxy mem block for output ", index, " is empty.");
+
+            auto controlBlockItr = m_outputControlBlocks.find(index);
+
+            if (controlBlockItr != m_outputControlBlocks.end()) {
+                auto output = graph.getOutputNodeByIndex(index);
+                OPENVINO_ASSERT(output, "Output with index: ", index, " is absent in the outputNodesMap");
+                auto parentEdge = output->getParentEdgeAt(0);
+                // avoid cyclic memory use
+                auto&& controlBlock = controlBlockItr->second;
+
+                std::shared_ptr<IMemoryBlock> memBlock =
+                    inputPtrs.count(controlBlock.rawPtr()) ?  // same memory is used on the input and output
+                        controlBlock.nextMemBlock()
+                                                           :  // then swap internal buffer to avoid data corruption
+                        controlBlock.currentMemBlock();       // else reuse the existing buffer
+
+                outputMemBlock->setMemBlockResize(std::move(memBlock));
+                DEBUG_LOG("reset proxy ",
+                          outputMemBlock,
+                          ", actual ",
+                          controlBlock.currentMemBlock(),
+                          " graph ",
+                          &graph,
+                          " infer request ",
+                          this);
+                DEBUG_LOG(index, ", tensor ", controlBlock.tensor());
             } else {
-                const auto& expectedTensorDesc = pBlobDesc;
-
-                if (expectedTensorDesc.getPrecision() != data->getTensorDesc().getPrecision()) {
-                    IE_THROW(ParameterMismatch) << "Network input and output use the same name: " << name << " but expect blobs with different precision: "
-                                                << data->getTensorDesc().getPrecision() << " for input and " << expectedTensorDesc.getPrecision()
-                                                << " for output.";
-                }
-
-                if (expectedTensorDesc.getDims() != data->getTensorDesc().getDims()) {
-                    IE_THROW(ParameterMismatch) << "Network input and output use the same name: " << name << " but expect blobs with different shapes.";
-                }
-
-                if (data->getTensorDesc().getLayout() != InferenceEngine::Layout::ANY && expectedTensorDesc.getLayout() != InferenceEngine::Layout::ANY &&
-                    expectedTensorDesc.getBlockingDesc() != data->getTensorDesc().getBlockingDesc()) {
-                    IE_THROW(ParameterMismatch) << "Network input and output use the same name: " << name
-                                                << " but expect blobs with different blocking descriptors.";
-                }
-            }
-
-            _outputs[name] = data;
-            if (!externalPtr.count(name) && data->getTensorDesc() == pBlobDesc && !graph->getConfig().batchLimit) {
-                externalPtr[name] = data->buffer();
+                outputMemBlock->reset();  // switch to the internal memory since memory sharing is no longer possible
             }
         }
-        data = _outputs[name];
-        checkBlob(data, name, false);
     }
-    if (!data) {
-        IE_THROW() << "Cannot find blob with name: " << name;
-    }
-    return data;
 }
 
-void LegacyInferRequest::PushInputData() {
-    for (auto input : _inputs) {
-        auto inputName = input.first;
-        if (!_networkInputs[inputName]) {
-            IE_THROW() << "Input blobs map contains not registered during IInferencePlugin::LoadNetwork blob with name " << inputName;
+std::vector<ov::SoPtr<ov::IVariableState>> SyncInferRequest::query_state() const {
+    if (m_asyncRequest->m_has_sub_infers) {
+        auto requests = m_asyncRequest->getSubInferRequest();
+        std::vector<ov::SoPtr<ov::IVariableState>> states;
+        for (auto request : requests) {
+            auto cur = request->query_state();
+            states.insert(states.end(), cur.begin(), cur.end());
         }
+        return states;
+    }
+    return {m_memory_states.begin(), m_memory_states.end()};
+}
 
-        // User can initialize input via setBlob API using tensorDesc with default (ANY) layout.
-        // Currently IE doesn't specify behavior in such scenario, so we assume real layout is equal to the network input.
-        auto inputBlob = input.second;
-        if (inputBlob->getTensorDesc().getLayout() == InferenceEngine::ANY) {
-            inputBlob->getTensorDesc().setLayout(_networkInputs[inputName]->getLayout());
-        }
+void SyncInferRequest::set_async_request(AsyncInferRequest* asyncRequest) {
+    m_asyncRequest = asyncRequest;
+}
 
-        pushInput(inputName, inputBlob, normToInputSupportedPrec(input));
+void SyncInferRequest::throw_if_canceled() const {
+    if (m_asyncRequest != nullptr) {
+        m_asyncRequest->throw_if_canceled();
     }
 }
 
-/* ========================================== InferRequest ========================================== */
-InferRequest::InferRequest(const std::vector<std::shared_ptr<const ov::Node>>& inputs,
-                           const std::vector<std::shared_ptr<const ov::Node>>& outputs,
-                           ExecNetwork::Ptr execNetwork)
-: InferRequestBase(inputs, outputs, execNetwork) {
-    for (const std::shared_ptr<const ov::Node>& in : inputs) {
-        modelInputsMap[ngraph::op::util::get_ie_output_name(ngraph::Output<const ngraph::Node>(in))] = in;
-    }
-    for (const std::shared_ptr<const ov::Node>& out : outputs) {
-        modelOutputsMap[ngraph::op::util::get_ie_output_name(out->input_value(0))] = out;
-    }
-
-    CreateInferRequest();
+ov::SoPtr<ov::ITensor> SyncInferRequest::get_tensor(const ov::Output<const ov::Node>& in_port) const {
+    auto port = get_internal_port(in_port);
+    return ov::ISyncInferRequest::get_tensor(port);
 }
 
-void InferRequest::initBlobs() {
-    for (const auto& it : modelInputsMap) {
-        InferRequest::GetBlob(it.first);
-    }
-    for (const auto& it : modelOutputsMap) {
-        InferRequest::GetBlob(it.first);
-    }
+std::vector<ov::SoPtr<ov::ITensor>> SyncInferRequest::get_tensors(const ov::Output<const ov::Node>& in_port) const {
+    auto port = get_internal_port(in_port);
+    return ov::ISyncInferRequest::get_tensors(port);
 }
 
-void InferRequest::SetBatch(int new_batch) {
-    if (!graph->getConfig().batchLimit || modelInputsMap.begin()->second->get_output_partial_shape(0).is_static()) {
-        IE_THROW() << "Can't set batch for model that can't be executed via legacy dynamic batch or for static model";
-    }
-
-    if (new_batch < 1 || new_batch > graph->getConfig().batchLimit) {
-        IE_THROW() << "Can't set batch that is bigger than upper bound";
-    }
-
-    m_curBatch = new_batch;
-
-    for (const auto& node : graph->GetNodes()) {
-        node->setDynamicBatchLim(new_batch);
-    }
-}
-
-void InferRequest::SetBlob(const std::string& name, const InferenceEngine::Blob::Ptr &data) {
-    OV_ITT_SCOPED_TASK(itt::domains::intel_cpu, "SetBlob");
-    if (name.empty()) {
-        IE_THROW(NotFound) << "Failed to set blob with empty name";
-    }
-
-    if (!data)
-        IE_THROW(NotAllocated) << "Failed to set empty blob with name: \'" << name << "\'";
-
-    bool isInput = false;
-    const auto inputNodeItr = modelInputsMap.find(name);
-    const auto outputNodeItr = modelOutputsMap.find(name);
-
-    if (inputNodeItr != modelInputsMap.end()) {
-        if (!inputNodeItr->second) {
-            IE_THROW() << "Can't set blob with name: " << name << ", because has null pointer to input node";
-        }
-        isInput = true;
-    } else if (outputNodeItr != modelOutputsMap.end()) {
-        if (!outputNodeItr->second) {
-            IE_THROW() << "Can't set blob with name: " << name << ", because has null pointer to output node";
-        }
-        isInput = false;
+const ov::Output<const ov::Node>& SyncInferRequest::get_internal_port(const ov::Output<const ov::Node>& port) const {
+    auto port_find = find_port(port);
+    OPENVINO_ASSERT(port_find.found(), "Can not find port: ", port.get_any_name());
+    if (port_find.is_input()) {
+        return m_input_ports_map.at(port_find.idx);
     } else {
-        IE_THROW(NotFound) << "Can't set blob with name: " << name << ", because input/output with this name doesn't exist";
+        return m_output_ports_map.at(port_find.idx);
     }
+}
 
-    const bool compoundBlobPassed = data->is<InferenceEngine::CompoundBlob>();
-    if (!compoundBlobPassed && data->buffer() == nullptr)
-        IE_THROW(NotAllocated) << "Input data was not allocated. Input name: \'" << name << "\'";
+void SyncInferRequest::set_tensor(const ov::Output<const ov::Node>& in_port, const ov::SoPtr<ov::ITensor>& in_tensor) {
+    OV_ITT_SCOPED_TASK(itt::domains::intel_cpu, "set_tensor");
+    if (!in_tensor)
+        OPENVINO_THROW("Failed to set empty tensor for port!");
+    auto port = get_internal_port(in_port);
+    auto tensor = in_tensor;
 
-    const auto &blobDesc = data->getTensorDesc();
-
-    if (isInput) {
-        const auto netInPrc = InferenceEngine::details::convertPrecision(inputNodeItr->second->get_output_element_type(0));
-        if (netInPrc != blobDesc.getPrecision()) {
-            IE_THROW(ParameterMismatch) << "Failed to set input blob with precision: "
-                               << blobDesc.getPrecision() << ", if CNNNetwork input blob precision is: " << netInPrc;
+    // WA: legacy api create blob with ANY layout will not set BlockingDesc, which will lead to tensor.get_shape()
+    // return empty shape but tensor.get_size() return correct value, and tensor.reshape() cannot update
+    // BlockingDesc, so to construct new tensor with original tensor's data, which is only for ov legacy api usage.
+    if (in_port.get_partial_shape().is_static() && in_tensor->get_size() > 0 && in_tensor->get_shape().size() == 0 &&
+        in_tensor->get_size() == ov::shape_size(in_port.get_shape()) && in_port.get_shape().size() > 0) {
+        tensor = ov::make_tensor(in_tensor->get_element_type(), in_port.get_shape(), in_tensor->data());
+    }
+    auto port_found = find_port(in_port);
+    auto mem_desc_ptr = MemoryDescUtils::generateCpuBlockedMemoryDesc(tensor);
+    if (port_found.is_input()) {
+        auto input_index = port_found.idx;
+        const auto netInPrc = port.get_element_type();
+        if (netInPrc != tensor->get_element_type()) {
+            OPENVINO_THROW("ParameterMismatch: Failed to set tensor for input with precision: ",
+                           tensor->get_element_type(),
+                           ", since the model input tensor precision is: ",
+                           netInPrc);
         }
 
-        const auto shape = inputNodeItr->second->get_output_partial_shape(0);
+        const auto& shape = port.get_partial_shape();
         const bool isDynamic = shape.is_dynamic();
-        if (!shape.compatible(ov::PartialShape(data->getTensorDesc().getDims()))) {
-            IE_THROW() << "Can't set input blob with name: " << name
-                       << ", because model input (shape=" << shape
-                       << ") and blob (shape=" << vec2str(data->getTensorDesc().getDims()) << ") are incompatible";
+        if (!shape.compatible(ov::PartialShape(tensor->get_shape()))) {
+            OPENVINO_THROW("Can't set the input tensor with index: ",
+                           input_index,
+                           ", because the model input (shape=",
+                           shape,
+                           ") and the tensor (shape=",
+                           vec2str(tensor->get_shape()),
+                           ") are incompatible");
         }
 
-        if (!isDynamic && ngraph::shape_size(shape.to_shape()) != data->size()) {
-            IE_THROW() << "Can't set input blob with name: " << name << ", because model input size = " << ngraph::shape_size(shape.to_shape())
-                       << " and blob size = " << data->size() << " are different.";
+        if (!isDynamic && ov::shape_size(shape.to_shape()) != tensor->get_size()) {
+            OPENVINO_THROW("Can't set input tensor with index: ",
+                           input_index,
+                           ", because the model input size = ",
+                           ov::shape_size(shape.to_shape()),
+                           " and the tensor size = ",
+                           tensor->get_size(),
+                           " are different.");
         }
 
-        MemoryDescPtr actualDesc = graph->getInputNodeByName(name)->getBaseMemDescAtOutputPort(0);
+        auto&& graph = m_compiled_model.graph();
+
+        auto inputNode = graph.getInputNodeByIndex(input_index);
+        OPENVINO_ASSERT(inputNode, "CPU execution graph doesn't contain input node with index: ", input_index);
+
+        MemoryDescPtr actualDesc = inputNode->getBaseMemDescAtOutputPort(0);
         if (!actualDesc->isDefined()) {
             // we must define desc for dynamic case
             // otherwise we got incorrect check on shape compatibility inside isCompatible
             // because lower and upper bound will be compared
-            actualDesc = actualDesc->cloneWithNewDims(blobDesc.getLayout() == InferenceEngine::Layout::SCALAR ? InferenceEngine::SizeVector{1} :
-                                                                                                                blobDesc.getDims());
-        }
-        if (actualDesc->isCompatible(MemoryDescUtils::convertToCpuBlockedMemoryDesc(blobDesc)) &&
-                graph->_normalizePreprocMap.find(name) == graph->_normalizePreprocMap.end() && !graph->getConfig().batchLimit) {
-            externalPtr[name] = data->buffer();
-        } else if (externalPtr.find(name) != externalPtr.end()) {
-            externalPtr.erase(name);
-        }
-        _inputs[name] = data;
-        _batched_inputs.erase(name);
-    } else {
-        if (compoundBlobPassed) {
-            IE_THROW(NotImplemented) << "Can't set compound blob: supported only for input pre-processing";
-        }
-        const auto netOutPrc = InferenceEngine::details::convertPrecision(outputNodeItr->second->get_input_element_type(0));
-        if (netOutPrc != blobDesc.getPrecision()) {
-            IE_THROW(ParameterMismatch) << "Failed to set input blob with precision: "
-                               << blobDesc.getPrecision() << ", if CNNNetwork output blob precision is: " << netOutPrc;
+            actualDesc = actualDesc->cloneWithNewDims(
+                ov::is_scalar(tensor->get_shape()) ? VectorDims{1} : VectorDims{tensor->get_shape()});
         }
 
-        const auto shape = outputNodeItr->second->get_input_partial_shape(0);
+        if (actualDesc->isCompatible(*mem_desc_ptr)) {
+            m_input_external_ptr[input_index] = tensor;
+        } else if (m_input_external_ptr.find(input_index) != m_input_external_ptr.end()) {
+            m_input_external_ptr.erase(input_index);
+        }
+    } else {
+        auto output_index = port_found.idx;
+        const auto netOutPrc = port.get_element_type();
+        if (netOutPrc != tensor->get_element_type()) {
+            OPENVINO_THROW("ParameterMismatch: Failed to set tensor for output with precision: ",
+                           tensor->get_element_type(),
+                           ", if model output tensor precision is: ",
+                           netOutPrc);
+        }
+
+        const auto& shape = port.get_partial_shape();
         const bool isDynamic = shape.is_dynamic();
 
-        if (!shape.compatible(ov::PartialShape(data->getTensorDesc().getDims()))) {
-            IE_THROW() << "Can't set output blob with name: " << name
-                       << ", because model output (shape=" << shape
-                       << ") and blob (shape=" << vec2str(data->getTensorDesc().getDims()) << ") are incompatible";
+        if (!shape.compatible(ov::PartialShape(tensor->get_shape())) && tensor->get_size() != 0) {
+            OPENVINO_THROW("Can't set the output tensor with index: ",
+                           output_index,
+                           ", because the model output tensor (shape=",
+                           shape,
+                           ") and the current tensor (shape=",
+                           vec2str(tensor->get_shape()),
+                           ") are incompatible");
         }
 
-        if (!isDynamic && ngraph::shape_size(shape.to_shape()) != data->size()) {
-            IE_THROW() << "Can't set output blob with name: " << name << ", because model output size = " << ngraph::shape_size(shape.to_shape())
-                       << " and blob size = " << data->size() << " are different.";
+        if (!isDynamic && ov::shape_size(shape.to_shape()) != tensor->get_size()) {
+            OPENVINO_THROW("Can't set the output tensor with index: ",
+                           output_index,
+                           ", because the model output size = ",
+                           ov::shape_size(shape.to_shape()),
+                           " and the currernt tensor size = ",
+                           tensor->get_size(),
+                           " are different.");
         }
 
-        const auto &desc = graph->getOutputNodeByName(name)->getParentEdgesAtPort(0)[0]->getMemory().getDesc();
-        if (!isDynamic && blobDesc == MemoryDescUtils::convertToTensorDesc(desc) && !graph->getConfig().batchLimit) {
-            externalPtr[name] = data->buffer();
-        } else if (externalPtr.find(name) != externalPtr.end()) {
-            externalPtr.erase(name);
+        auto&& graph = m_compiled_model.graph();
+
+        auto outputNode = graph.getOutputNodeByIndex(output_index);
+        OPENVINO_ASSERT(outputNode, "CPU execution graph doesn't contain output node with index: ", output_index);
+        const auto& desc = outputNode->getParentEdgeAt(0)->getMemory().getDesc();
+        if (!isDynamic && mem_desc_ptr->isCompatible(desc)) {
+            m_output_external_ptr[output_index] = tensor;
+        } else if (m_output_external_ptr.find(output_index) != m_output_external_ptr.end()) {
+            m_output_external_ptr.erase(output_index);
         }
-        _outputs[name] = data;
+
+        m_outputs[output_index] = tensor;
+        m_outputControlBlocks.erase(output_index);  // now the memory is under user's control
     }
+    ov::ISyncInferRequest::set_tensor(port, tensor);
 }
 
-void InferRequest::SetBlobsImpl(const std::string& name, const InferenceEngine::BatchedBlob::Ptr& batched_blob) {
-    _batched_inputs[name] = batched_blob;
+void SyncInferRequest::set_tensors_impl(const ov::Output<const ov::Node> port,
+                                        const std::vector<ov::SoPtr<ITensor>>& tensors) {
+    if (find_port(port).is_input()) {
+        m_batched_tensors[port.get_tensor_ptr()] = tensors;
+        return;
+    }
+    OPENVINO_THROW("Cannot find port to set_tensors!");
 }
 
-InferenceEngine::Blob::Ptr InferRequest::GetBlob(const std::string& name) {
-    OV_ITT_SCOPED_TASK(itt::domains::intel_cpu, "GetBlob");
+void SyncInferRequest::init_tensor(const std::size_t& port_index, const ov::ISyncInferRequest::FoundPort::Type& type) {
+    OV_ITT_SCOPED_TASK(itt::domains::intel_cpu, "init_tensor");
+    auto&& graph = m_compiled_model.graph();
+    OPENVINO_ASSERT(graph.IsReady(), "Graph is not ready!");
 
-    if (!graph || !graph->IsReady())
-        IE_THROW() << "Graph is not ready!";
+    ov::SoPtr<ITensor> tensor;
+    if (type == ov::ISyncInferRequest::FoundPort::Type::INPUT) {
+        OPENVINO_ASSERT(graph.getInputNodeByIndex(port_index),
+                        "Tensor with index: ",
+                        port_index,
+                        " absent in the plugin's graph inputs");
+        const auto& port = m_input_ports_map[port_index];
+        tensor = ov::ISyncInferRequest::get_tensor(port);
 
-    InferenceEngine::Blob::Ptr data;
-
-    const auto &inMap = graph->inputNodesMap;
-    auto input = inMap.find(name);
-    if (input != inMap.end()) {
-        if (_inputs.find(name) == _inputs.end()) {
-            auto inputNode = modelInputsMap.find(name);
-            if (inputNode != modelInputsMap.end()) {
-                if (!inputNode->second) {
-                    IE_THROW() << "Can't get blob with name: " << name << ", because has null pointer to input node";
+        if (!tensor) {
+            const auto& shape = port.get_partial_shape();
+            const bool isDynamic = shape.is_dynamic();
+            ov::Shape tensor_shape;
+            if (isDynamic) {
+                for (auto&& item : shape) {
+                    tensor_shape.push_back(item.is_static() ? item.get_length() : 0);
                 }
+            } else {
+                tensor_shape = shape.to_shape();
+            }
 
-                const auto shape = inputNode->second->get_output_partial_shape(0);
-                const bool isDynamic = shape.is_dynamic();
-                InferenceEngine::SizeVector dims;
+            tensor = ov::make_tensor(port.get_element_type(), tensor_shape);
+            ov::ISyncInferRequest::set_tensor(port, tensor);
+
+            if (!isDynamic) {
+                auto mem_desc_ptr = MemoryDescUtils::generateCpuBlockedMemoryDesc(tensor);
+                auto inputNode = graph.getInputNodeByIndex(port_index);
+                OPENVINO_ASSERT(inputNode, "CPU execution graph doesn't contain input node with index: ", port_index);
+                if (mem_desc_ptr->isCompatible(inputNode->getChildEdgeAt(0)->getMemory().getDesc())) {
+                    m_input_external_ptr[port_index] = tensor;
+                }
+            }
+        }
+    }
+
+    if (type == ov::ISyncInferRequest::FoundPort::Type::OUTPUT) {
+        auto output = graph.getOutputNodeByIndex(port_index);
+        OPENVINO_ASSERT(output, "Tensor with index: ", port_index, " absent in the plugin's graph outputs");
+        if (m_outputs.find(port_index) == m_outputs.end()) {
+            const auto& port = m_output_ports_map[port_index];
+            const auto& port_shape = port.get_partial_shape();
+            const auto& graph_shape = output->getInputShapeAtPort(0);
+
+            // WA, due to the transformations and constant folding, shape inference of the resulting model may
+            // have static shapes, while they are dynamic in the initial representation
+            const auto& shape = graph_shape.isDynamic()
+                                    ? port_shape
+                                    : (port_shape.is_dynamic() ? graph_shape.toPartialShape() : port_shape);
+
+            const bool isDynamic = shape.is_dynamic();
+            tensor = ov::ISyncInferRequest::get_tensor(port);
+
+            if (!tensor) {
+                ov::Shape tensor_shape;
+                const auto model_prec = port.get_element_type();
                 if (isDynamic) {
-                    dims = InferenceEngine::SizeVector(shape.rank().get_length(), 0);
-                } else {
-                    dims = shape.to_shape();
-                }
+                    if (model_prec == element::string) {
+                        VectorDims memDims;
+                        auto c_shape = Shape{shape};
+                        for (auto&& dim : c_shape.getDims()) {
+                            memDims.push_back(dim != Shape::UNDEFINED_DIM ? dim : 0);
+                        }
 
-                InferenceEngine::TensorDesc desc(InferenceEngine::details::convertPrecision(inputNode->second->get_output_element_type(0)),
-                                                 dims, InferenceEngine::TensorDesc::getLayoutByRank(dims.size()));
+                        dnnl::engine eng(dnnl::engine::kind::cpu, 0);
+                        CpuBlockedMemoryDescPtr desc =
+                            std::make_shared<CpuBlockedMemoryDesc>(model_prec, Shape{memDims});
+                        auto memory = std::make_shared<StringMemory>(eng, desc);
 
-                _inputs[name] = make_blob_with_precision(desc);
-                _inputs[name]->allocate();
-
-                if (!isDynamic &&
-                    desc == MemoryDescUtils::convertToTensorDesc(graph->getInputNodeByName(name)->getChildEdgesAtPort(0)[0]->getMemory().getDesc()) &&
-                        graph->_normalizePreprocMap.find(name) == graph->_normalizePreprocMap.end() && !graph->getConfig().batchLimit) {
-                    externalPtr[name] = _inputs[name]->buffer();
-                }
-            } else {
-                IE_THROW() << "Blob with name: " << name << " exists in CPU plugin graph, but absents in network inputs";
-            }
-        }
-        data = _inputs[name];
-    }
-
-    const auto &outMap = graph->outputNodesMap;
-    auto output = outMap.find(name);
-    if (output != outMap.end()) {
-        if (_outputs.find(name) == _outputs.end()) {
-            auto outputNode = modelOutputsMap.find(name);
-            if (modelOutputsMap.find(name) != modelOutputsMap.end()) {
-                const auto shape = outputNode->second->get_input_partial_shape(0);
-                bool isDynamic = shape.is_dynamic();
-
-                if (!data) {
-                    InferenceEngine::SizeVector dims;
-                    if (isDynamic) {
-                        dims = InferenceEngine::SizeVector(shape.rank().get_length(), 0);
+                        tensor = std::make_shared<Tensor>(memory);
                     } else {
-                        dims = shape.to_shape();
+                        const auto graph_prec = output->getParentEdgeAt(0)->getMemory().getDesc().getPrecision();
+                        OutputControlBlock control_block{model_prec, Shape{shape}};
+
+                        DEBUG_LOG(port_index,
+                                  ", tensor ",
+                                  control_block.tensor(),
+                                  ", memBlock ",
+                                  control_block.tensor()->get_memory()->getMemoryBlock(),
+                                  "memory object ",
+                                  control_block.tensor()->get_memory().get());
+
+                        tensor = control_block.tensor();
+                        if (model_prec == graph_prec)
+                            m_outputControlBlocks.emplace(std::make_pair(port_index, std::move(control_block)));
                     }
-
-                    InferenceEngine::TensorDesc desc(InferenceEngine::details::convertPrecision(outputNode->second->get_input_element_type(0)),
-                                                     dims, InferenceEngine::TensorDesc::getLayoutByRank(dims.size()));
-
-                    data = make_blob_with_precision(desc);
-                    data->allocate();
                 } else {
-                    const auto& blobDims = data->getTensorDesc().getDims();
-                    // in static shape case is enough information that shapes are incompatible to throw exception
-                    // but in dynamic shape case we also need to handle following corner case:
-                    // on blob initialization stage we create empty blob with dimensions equal 0
-                    // so if we have blob with all zero dimension we mustn't throw exception
-                    if (!shape.compatible(ov::PartialShape(blobDims)) && (!isDynamic || blobDims.size() != shape.rank().get_length() ||
-                            std::any_of(blobDims.begin(), blobDims.end(), [](const size_t& dims) { return dims != 0; } ))) {
-                        IE_THROW(ParameterMismatch) << "Network input and output use the same name: " << name
-                                                    << ", but expect blobs with different shapes. Input shape: "
-                                                    << ov::PartialShape(blobDims) << ", output shape: " << shape;
-                    }
-
-                    const auto netOutPrc = InferenceEngine::details::convertPrecision(outputNode->second->get_input_element_type(0));
-                    if (netOutPrc != data->getTensorDesc().getPrecision()) {
-                        IE_THROW(ParameterMismatch)
-                                    << "Network input and output use the same name: " << name << " but expect blobs with different precision: "
-                                    << data->getTensorDesc().getPrecision() << " for input and " << netOutPrc
-                                    << " for output.";
-                    }
+                    tensor_shape = shape.to_shape();
+                    tensor = ov::make_tensor(model_prec, tensor_shape);
                 }
-
-                _outputs[name] = data;
-                if (!isDynamic && !externalPtr.count(name) &&
-                    data->getTensorDesc() == MemoryDescUtils::convertToTensorDesc(output->second->getParentEdgesAtPort(0)[0]->getMemory().getDesc()) &&
-                        !graph->getConfig().batchLimit) {
-                    externalPtr[name] = data->buffer();
+                ov::ISyncInferRequest::set_tensor(port, tensor);
+            }
+            m_outputs[port_index] = tensor;
+            if (!port_shape.is_dynamic() && !m_output_external_ptr.count(port_index)) {
+                auto desc = MemoryDescUtils::generateCpuBlockedMemoryDesc(tensor);
+                if (desc->isCompatible(output->getParentEdgeAt(0)->getMemory().getDesc())) {
+                    m_output_external_ptr[port_index] = tensor;
                 }
-            } else {
-                IE_THROW() << "Blob with name: " << name << " exists in CPU plugin graph, but absents in network outputs";
+            }
+            // update tensors in case of multiple output ports with the same name
+            for (const auto& out : m_output_ports_map) {
+                if ((out.first == port_index) && tensor) {
+                    ov::ISyncInferRequest::set_tensor(out.second, tensor);
+                }
             }
         }
-        data = _outputs[name];
     }
-
-    if (!data) {
-        IE_THROW() << "Cannot find blob with name: " << name;
+    if (!tensor) {
+        OPENVINO_THROW("Cannot find tensor with index: ", port_index);
     }
-
-    return data;
+    return;
 }
 
-void InferRequest::PushInputData() {
-    for (auto input : _inputs) {
-        auto inputName = input.first;
-        if (!modelInputsMap[inputName]) {
-            IE_THROW() << "Input blobs map contains not registered during IInferencePlugin::LoadNetwork blob with name " << inputName;
+void SyncInferRequest::push_input_data(Graph& graph) {
+    for (auto& input : m_input_ports_map) {
+        auto tensor = get_tensor(input.second);
+        graph.PushInputData(input.first, tensor);
+    }
+}
+
+SyncInferRequest::OutputControlBlock::OutputControlBlock(const ov::element::Type& precision, const Shape& shape) {
+    dnnl::engine eng(dnnl::engine::kind::cpu, 0);
+    m_buffers[m_buffIndx] = std::make_shared<MemoryBlockWithReuse>();
+    m_proxyMemBlock = std::make_shared<ProxyMemoryBlock>(m_buffers[m_buffIndx]);
+
+    VectorDims memDims;
+    if (shape.isDynamic()) {  // this is a WA since the ITensor doesn't allow dyn shapes
+        for (auto&& item : shape.getDims()) {
+            memDims.push_back(item != Shape::UNDEFINED_DIM ? item : 0);
         }
+    } else {
+        memDims = shape.getStaticDims();
+    }
 
-        pushInput(inputName, input.second, normToInputSupportedPrec(input));
+    CpuBlockedMemoryDescPtr desc = std::make_shared<CpuBlockedMemoryDesc>(precision, Shape{memDims});
+
+    auto memory = std::make_shared<Memory>(eng, desc, m_proxyMemBlock);
+    m_tensor = std::make_shared<Tensor>(memory);
+}
+
+void SyncInferRequest::sub_streams_infer() {
+    std::map<ov::Output<const ov::Node>, ov::SoPtr<ov::ITensor>> input_tensors;
+    auto message = ov::threading::message_manager();
+    auto requests = m_asyncRequest->getSubInferRequest();
+    auto inputs = get_inputs();
+    auto outputs = get_outputs();
+
+    size_t requests_num = requests.size();
+
+    if (requests.size() > 0) {
+        for (const auto& output : outputs) {
+            auto tensor = requests[0]->get_tensor(output);
+            set_tensor(output, tensor);
+        }
+        for (size_t i = 0; i < requests_num; i++) {
+            for (auto& input : inputs) {
+                auto tensor = get_tensor(input);
+                requests[i]->set_tensor(input, tensor);
+            }
+
+            requests[i]->set_callback([message](const std::exception_ptr& ptr) {
+                ov::threading::MessageInfo msg_info;
+                msg_info.msg_type = ov::threading::MsgType::CALL_BACK;
+                message->send_message(msg_info);
+            });
+        }
+        for (size_t i = 0; i < requests_num; i++) {
+            requests[i]->start_async();
+        }
     }
 }
 
-}   // namespace intel_cpu
-}   // namespace ov
+}  // namespace intel_cpu
+}  // namespace ov

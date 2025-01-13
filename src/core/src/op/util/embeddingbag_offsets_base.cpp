@@ -1,21 +1,19 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "ngraph/op/util/embeddingbag_offsets_base.hpp"
+#include "openvino/op/util/embeddingbag_offsets_base.hpp"
 
 #include "embeddingbag_offsets_shape_inference.hpp"
 #include "itt.hpp"
-#include "ngraph/op/constant.hpp"
-
-using namespace std;
 
 ov::op::util::EmbeddingBagOffsetsBase::EmbeddingBagOffsetsBase(const Output<Node>& emb_table,
                                                                const Output<Node>& indices,
                                                                const Output<Node>& offsets,
                                                                const Output<Node>& default_index,
                                                                const Output<Node>& per_sample_weights)
-    : Op({emb_table, indices, offsets, default_index, per_sample_weights}) {
+    : Op({emb_table, indices, offsets, default_index, per_sample_weights}),
+      m_reduction{Reduction::SUM} {
     constructor_validate_and_infer_types();
 }
 
@@ -23,14 +21,46 @@ ov::op::util::EmbeddingBagOffsetsBase::EmbeddingBagOffsetsBase(const Output<Node
                                                                const Output<Node>& indices,
                                                                const Output<Node>& offsets,
                                                                const Output<Node>& default_index)
-    : Op({emb_table, indices, offsets, default_index}) {
+    : Op({emb_table, indices, offsets, default_index}),
+      m_reduction{Reduction::SUM} {
     constructor_validate_and_infer_types();
 }
 
 ov::op::util::EmbeddingBagOffsetsBase::EmbeddingBagOffsetsBase(const Output<Node>& emb_table,
                                                                const Output<Node>& indices,
                                                                const Output<Node>& offsets)
-    : Op({emb_table, indices, offsets}) {
+    : Op({emb_table, indices, offsets}),
+      m_reduction{Reduction::SUM} {
+    constructor_validate_and_infer_types();
+}
+
+ov::op::util::EmbeddingBagOffsetsBase::EmbeddingBagOffsetsBase(const Output<Node>& emb_table,
+                                                               const Output<Node>& indices,
+                                                               const Output<Node>& offsets,
+                                                               const Output<Node>& default_index,
+                                                               const Output<Node>& per_sample_weights,
+                                                               const Reduction& reduction)
+    : Op({emb_table, indices, offsets, default_index, per_sample_weights}),
+      m_reduction{reduction} {
+    constructor_validate_and_infer_types();
+}
+
+ov::op::util::EmbeddingBagOffsetsBase::EmbeddingBagOffsetsBase(const Output<Node>& emb_table,
+                                                               const Output<Node>& indices,
+                                                               const Output<Node>& offsets,
+                                                               const Output<Node>& default_index,
+                                                               const Reduction& reduction)
+    : Op({emb_table, indices, offsets, default_index}),
+      m_reduction{reduction} {
+    constructor_validate_and_infer_types();
+}
+
+ov::op::util::EmbeddingBagOffsetsBase::EmbeddingBagOffsetsBase(const Output<Node>& emb_table,
+                                                               const Output<Node>& indices,
+                                                               const Output<Node>& offsets,
+                                                               const Reduction& reduction)
+    : Op({emb_table, indices, offsets}),
+      m_reduction{reduction} {
     constructor_validate_and_infer_types();
 }
 
@@ -71,6 +101,9 @@ void ov::op::util::EmbeddingBagOffsetsBase::validate_and_infer_types() {
 
     if (get_input_size() == 5) {
         NODE_VALIDATION_CHECK(this,
+                              m_reduction == Reduction::SUM,
+                              "Per sample weights can only be used in Reduction::SUM mode.");
+        NODE_VALIDATION_CHECK(this,
                               get_input_element_type(EMB_TABLE).compatible(get_input_element_type(PER_SAMPLE_WEIGHTS)),
                               "Per sample weight element type (",
                               get_input_element_type(PER_SAMPLE_WEIGHTS),
@@ -79,19 +112,27 @@ void ov::op::util::EmbeddingBagOffsetsBase::validate_and_infer_types() {
                               ")");
     }
 
-    element::Type result_et = get_input_element_type(EMB_TABLE);
-
-    std::vector<PartialShape> result_shapes = {PartialShape::dynamic()};
-    std::vector<PartialShape> input_shapes;
-    for (int i = 0; i < get_input_size(); i++)
-        input_shapes.push_back(get_input_partial_shape(i));
-
-    shape_infer(this, input_shapes, result_shapes);
-
-    set_output_type(0, result_et, result_shapes[0]);
+    const auto& result_et = get_input_element_type(EMB_TABLE);
+    const auto input_shapes = ov::util::get_node_input_partial_shapes(*this);
+    set_output_type(0, result_et, shape_infer(this, input_shapes)[0]);
 }
 
 bool ov::op::util::EmbeddingBagOffsetsBase::visit_attributes(AttributeVisitor& visitor) {
     OV_OP_SCOPE(util_EmbeddingBagOffsetsBase_visit_attributes);
+    visitor.on_attribute("reduction", m_reduction);
     return true;
 }
+namespace ov {
+template <>
+OPENVINO_API EnumNames<op::util::EmbeddingBagOffsetsBase::Reduction>&
+EnumNames<op::util::EmbeddingBagOffsetsBase::Reduction>::get() {
+    static auto enum_names = EnumNames<op::util::EmbeddingBagOffsetsBase::Reduction>(
+        "op::util::EmbeddingBagOffsetsBase::Reduction",
+        {{"sum", op::util::EmbeddingBagOffsetsBase::Reduction::SUM},
+         {"mean", op::util::EmbeddingBagOffsetsBase::Reduction::MEAN}});
+    return enum_names;
+}
+std::ostream& operator<<(std::ostream& s, const op::util::EmbeddingBagOffsetsBase::Reduction& reduction) {
+    return s << as_string(reduction);
+}
+}  // namespace ov

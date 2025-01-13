@@ -1,14 +1,13 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <ngraph/op/op.hpp>
-#include <ngraph/op/power.hpp>
+#include "openvino/op/op.hpp"
 #include <snippets/snippets_isa.hpp>
 
-namespace ngraph {
+namespace ov {
 namespace snippets {
 namespace op {
 
@@ -20,7 +19,6 @@ namespace op {
 class PowerStatic : public ov::op::util::UnaryElementwiseArithmetic {
 public:
     OPENVINO_OP("PowerStatic", "SnippetsOpset", ov::op::util::UnaryElementwiseArithmetic);
-    BWDCMP_RTTI_DECLARATION;
 
     PowerStatic() = default;
     PowerStatic(const Output <Node> &arg, float power) : UnaryElementwiseArithmetic(arg), power(power) {
@@ -42,4 +40,4 @@ private:
 };
 } // namespace op
 } // namespace snippets
-} // namespace ngraph
+} // namespace ov

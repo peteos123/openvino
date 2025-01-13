@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -22,6 +22,10 @@ ParamsKey weight_bias_params::GetParamsKey() const {
         k.EnableBiasPerFeature();
     } else if (bias[0].GetLayout() == outputs[0].GetLayout()) {
         k.EnableBiasPerOutput();
+    }
+
+    if (compressed) {
+        k.EnableWeightsCompression();
     }
 
     return k;

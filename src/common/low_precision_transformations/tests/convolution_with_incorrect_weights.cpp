@@ -1,23 +1,23 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include <gtest/gtest.h>
 
-#include <low_precision/convolution.hpp>
-#include <low_precision/fake_quantize_decomposition.hpp>
-#include <low_precision/fold_fake_quantize.hpp>
-#include <ngraph/pass/constant_folding.hpp>
+#include "low_precision/convolution.hpp"
+#include "low_precision/fake_quantize_decomposition.hpp"
+#include "low_precision/fold_fake_quantize.hpp"
+#include "openvino/pass/constant_folding.hpp"
 #include <sstream>
 #include <string>
-#include <transformations/init_node_info.hpp>
+#include "transformations/init_node_info.hpp"
 
-#include "common_test_utils/ngraph_test_utils.hpp"
+#include "common_test_utils/ov_test_utils.hpp"
 #include "layer_transformation.hpp"
-#include "lpt_ngraph_functions/common/dequantization_operations.hpp"
-#include "lpt_ngraph_functions/common/fake_quantize_on_data.hpp"
-#include "lpt_ngraph_functions/common/fake_quantize_on_weights.hpp"
-#include "lpt_ngraph_functions/convolution_function.hpp"
+#include "ov_lpt_models/common/dequantization_operations.hpp"
+#include "ov_lpt_models/common/fake_quantize_on_data.hpp"
+#include "ov_lpt_models/common/fake_quantize_on_weights.hpp"
+#include "ov_lpt_models/convolution.hpp"
 #include "simple_low_precision_transformer.hpp"
 
 namespace {
@@ -25,20 +25,20 @@ class ConvolutionWithIncorrectWeightsTestValues {
 public:
     class Actual {
     public:
-        ngraph::builder::subgraph::DequantizationOperations dequantization;
-        ngraph::builder::subgraph::FakeQuantizeOnWeights fakeQuantizeOnWeights;
+        ov::builder::subgraph::DequantizationOperations dequantization;
+        ov::builder::subgraph::FakeQuantizeOnWeights fakeQuantizeOnWeights;
     };
 
     class Expected {
     public:
-        ngraph::builder::subgraph::DequantizationOperations dequantizationBefore;
-        ngraph::element::Type weightsPrecision;
+        ov::builder::subgraph::DequantizationOperations dequantizationBefore;
+        ov::element::Type weightsPrecision;
         std::vector<float> weightsValues;
-        ngraph::builder::subgraph::DequantizationOperations dequantizationAfter;
+        ov::builder::subgraph::DequantizationOperations dequantizationAfter;
     };
 
-    ngraph::element::Type inputPrecision;
-    ngraph::Shape inputShape;
+    ov::element::Type inputPrecision;
+    ov::Shape inputShape;
     TestTransformationParams params;
     bool isCorrect;
     Actual actual;
@@ -52,7 +52,7 @@ public:
     void SetUp() override {
         const ConvolutionWithIncorrectWeightsTestValues testValues = GetParam();
 
-        actualFunction = ngraph::builder::subgraph::ConvolutionFunction::getOriginalWithIncorrectWeights(
+        actualFunction = ov::builder::subgraph::ConvolutionFunction::getOriginalWithIncorrectWeights(
             testValues.inputShape,
             testValues.inputPrecision,
             testValues.actual.fakeQuantizeOnWeights,
@@ -60,19 +60,18 @@ public:
             testValues.isCorrect);
 
         SimpleLowPrecisionTransformer transform;
-        transform.add<ngraph::pass::low_precision::ConvolutionTransformation, ngraph::opset1::Convolution>(
+        transform.add<ov::pass::low_precision::ConvolutionTransformation, ov::opset1::Convolution>(
             testValues.params);
-        transform
-            .add<ngraph::pass::low_precision::FakeQuantizeDecompositionTransformation, ngraph::opset1::FakeQuantize>(
-                testValues.params);
+        transform.add<ov::pass::low_precision::FakeQuantizeDecompositionTransformation, ov::op::v0::FakeQuantize>(
+            testValues.params);
         transform.transform(actualFunction);
 
-        ngraph::pass::Manager cleanupManager;
-        cleanupManager.register_pass<ngraph::pass::low_precision::FoldFakeQuantizeTransformation>();
-        cleanupManager.register_pass<ngraph::pass::ConstantFolding>();
+        ov::pass::Manager cleanupManager;
+        cleanupManager.register_pass<ov::pass::low_precision::FoldFakeQuantizeTransformation>();
+        cleanupManager.register_pass<ov::pass::ConstantFolding>();
         cleanupManager.run_passes(actualFunction);
 
-        referenceFunction = ngraph::builder::subgraph::ConvolutionFunction::getReferenceWithIncorrectWeights(
+        referenceFunction = ov::builder::subgraph::ConvolutionFunction::getReferenceWithIncorrectWeights(
             testValues.inputShape,
             testValues.inputPrecision,
             testValues.expected.dequantizationBefore,
@@ -91,7 +90,7 @@ public:
 };
 
 TEST_P(ConvolutionWithIncorrectWeightsTransformation, CompareFunctions) {
-    ngraph::pass::InitNodeInfo().run_on_model(actualFunction);
+    ov::pass::InitNodeInfo().run_on_model(actualFunction);
     actualFunction->validate_nodes_and_infer_types();
 
     auto res = compare_functions(actualFunction, referenceFunction, true);
@@ -101,31 +100,31 @@ TEST_P(ConvolutionWithIncorrectWeightsTransformation, CompareFunctions) {
 const std::vector<ConvolutionWithIncorrectWeightsTestValues> testValues = {
     // incorrect weights
     {
-        ngraph::element::u8,
-        ngraph::Shape({1, 3, 224, 224}),
+        ov::element::u8,
+        ov::Shape({1, 3, 224, 224}),
         LayerTransformation::createParamsU8I8(),
         false,
         {
-            {ngraph::element::f32, {}, {0.1f}},
-            {255ul, ngraph::Shape{1, 1, 1, 1}, {0.f}, {254.f}, {-127.f}, {127.f}},
+            {ov::element::f32, {}, {0.1f}},
+            {255ul, ov::Shape{1, 1, 1, 1}, {0.f}, {254.f}, {-127.f}, {127.f}},
         },
-        {{ngraph::element::f32, {}, {0.1f}}, ngraph::element::f32, {-129.f}, {}},
+        {{ov::element::f32, {}, {0.1f}}, ov::element::f32, {-129.f}, {}},
     },
     // correct weights
     {
-        ngraph::element::u8,
-        ngraph::Shape({1, 3, 224, 224}),
+        ov::element::u8,
+        ov::Shape({1, 3, 224, 224}),
         LayerTransformation::createParamsU8I8(),
         true,
         {
-            {ngraph::element::f32, {}, {0.1f}},
-            {255ul, ngraph::Shape{1, 1, 1, 1}, {0.f}, {254.f}, {-127.f}, {127.f}},
+            {ov::element::f32, {}, {0.1f}},
+            {255ul, ov::Shape{1, 1, 1, 1}, {0.f}, {254.f}, {-127.f}, {127.f}},
         },
         {
             {},
-            ngraph::element::i8,
+            ov::element::i8,
             {-126.f},
-            {{}, {}, {{0.1f}, ngraph::element::f32, {}}},
+            {{}, {}, {{0.1f}, ov::element::f32, {}}},
         },
     },
 };

@@ -1,15 +1,12 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "ngraph/op/util/index_reduction.hpp"
+#include "openvino/op/util/index_reduction.hpp"
 
 #include <memory>
 
 #include "itt.hpp"
-#include "ngraph/attribute_visitor.hpp"
-
-using namespace std;
 
 ov::op::util::IndexReduction::IndexReduction() = default;
 
@@ -73,7 +70,7 @@ void ov::op::util::IndexReduction::validate_and_infer_types() {
             output_dims[i] = arg_shape[j++];
         }
 
-        output_shape = PartialShape(output_dims);
+        output_shape = PartialShape(std::move(output_dims));
     }
 
     set_output_type(0, m_index_element_type, output_shape);

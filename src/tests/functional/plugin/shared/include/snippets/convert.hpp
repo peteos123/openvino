@@ -11,7 +11,7 @@ namespace test {
 namespace snippets {
 
 typedef std::tuple<
-        std::vector<ov::Shape>,                                                     // InputShapes
+        std::vector<InputShape>,                                                    // InputShapes
         std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>>,  // Input and Output data types for Converts
         size_t,                                                                     // Expected num nodes
         size_t,                                                                     // Expected num subgraphs
@@ -21,7 +21,7 @@ typedef std::tuple<
 using parameters = std::vector<std::tuple<int32_t, int32_t, int32_t>>;
 
 class Convert : public testing::WithParamInterface<ov::test::snippets::ConvertParams>,
-                virtual public ov::test::SnippetsTestsCommon {
+                virtual public SnippetsTestsCommon {
 public:
     static std::string getTestCaseName(testing::TestParamInfo<ov::test::snippets::ConvertParams> obj);
 

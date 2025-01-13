@@ -1,26 +1,21 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "pass_manager.h"
 #include "program_node.h"
-#include "layout_optimizer.h"
 #include "intel_gpu/graph/program.hpp"
 #include "intel_gpu/primitives/mutable_data.hpp"
 #include "program_helpers.h"
 #include "intel_gpu/runtime/itt.hpp"
 #include <vector>
-#include <memory>
-#include <list>
-#include <map>
-#include <set>
 
 using namespace cldnn;
 
 void basic_memory_dependencies::run(program& p) {
     OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "pass::BasicMemoryDependencies");
     auto itr = p.get_processing_order().begin();
-    std::vector<primitive_id> past_outputs;
+    std::vector<size_t> past_outputs;
     while (itr != p.get_processing_order().end()) {
         auto& node = *itr;
         itr++;
@@ -30,13 +25,12 @@ void basic_memory_dependencies::run(program& p) {
             continue;
 
         // add my dependencies to restriction list (can't share input.output buffers)
-        for (auto it : node->get_dependencies()) {
+        for (const auto& it : node->get_dependencies()) {
             add_memory_dependency(node, it.first);
             add_memory_dependency(it.first, node);
         }
 
-        if (node->get_preferred_impl_type() == impl_types::onednn
-            && (node->is_type<convolution>() || node->is_type<deconvolution>())) {
+        if (node->get_preferred_impl_type() == impl_types::onednn) {
             size_t eltw_dep = 0;
             for (auto& fused_op : node->get_fused_primitives()) {
                 if (fused_op.is_type<eltwise>() && fused_op.deps.size() == 1) {
@@ -44,8 +38,9 @@ void basic_memory_dependencies::run(program& p) {
                     auto fusing_type = onednn_add_fusing_helpers::get_add_fusing_type(*node, fused_op);
                     if (fusing_type != add_fusing_type::sum || eltw_dep != 0)
                         continue;
-
-                    eltw_dep = fused_op.dep_start_idx;
+                    if (!fused_op.has_outer_dep())
+                        continue;
+                    eltw_dep = fused_op.outer_dep_start_idx;
                     auto& eltw_node = node->get_dependency(eltw_dep);
                     eltw_node.can_share_buffer(false);
                     node->can_share_buffer(false);
@@ -62,7 +57,7 @@ void basic_memory_dependencies::run(program& p) {
         node->add_memory_dependency(past_outputs);
         // if current node is an output add it to the outputs list after restriction.
         if (node->is_output()) {
-            past_outputs.push_back(node->id());
+            past_outputs.push_back(node->get_unique_id());
             if (node->is_type<mutable_data>()) {
                 // if output is mutable data, then propagate output flag to its dependencies
                 for (auto& dep : node->get_dependencies()) {

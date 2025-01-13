@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -55,12 +55,12 @@ SoftmaxKernel_fb::Parent::DispatchData SoftmaxKernel_fb::SetDefault(const softma
     return dispatchData;
 }
 
-KernelsPriority SoftmaxKernel_fb::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority SoftmaxKernel_fb::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_6;
 }
 
-bool kernel_selector::SoftmaxKernel_fb::Validate(const Params& params, const optional_params& o) const {
-    if (!SoftmaxKernelBase::Validate(params, o)) {
+bool kernel_selector::SoftmaxKernel_fb::Validate(const Params& params) const {
+    if (!SoftmaxKernelBase::Validate(params)) {
         return false;
     }
 
@@ -88,28 +88,36 @@ bool kernel_selector::SoftmaxKernel_fb::Validate(const Params& params, const opt
     }
 }
 
-KernelsData SoftmaxKernel_fb::GetKernelsData(const Params& params, const optional_params& optParams) const {
-    if (!Validate(params, optParams)) {
+KernelsData SoftmaxKernel_fb::GetKernelsData(const Params& params) const {
+    if (!Validate(params)) {
         return {};
     }
-    return GetCommonKernelsData(params, optParams);
+    return GetCommonKernelsData(params);
 }
 
 JitConstants SoftmaxKernel_fb::GetJitConstants(const softmax_params& params, DispatchData dispatchData) const {
     auto jit = Parent::GetJitConstants(params, dispatchData);
 
-    jit.Merge(MakeTypeJitConstants(GetActivationType(params), "ACTIVATION"));
+    jit.AddConstants({
+        MakeJitConstant("ITEMS_NUM", dispatchData.itemsNum),
+        MakeJitConstant("LWS", dispatchData.lws[0]),
+        MakeJitConstant("GWS", dispatchData.gws[0]),
+        MakeJitConstant("DATA_SETS_COUNT", dispatchData.dataSetsCount),
+        MakeJitConstant("DATA_SET_SIZE", dispatchData.dataSetSize),
+        MakeJitConstant("LEFTOVERS", dispatchData.leftovers),
+    });
+    auto activation_dt = GetActivationType(params);
+    jit.Merge(MakeTypeJitConstants(activation_dt, "ACTIVATION"));
 
     if (!params.fused_ops.empty()) {
-        auto input_dt = GetActivationType(params);
         FusedOpsConfiguration conf_main = {"_MAIN",
                                            {"global_id", "LWS * i", "0", "0"},
                                            "dequantized",
-                                           input_dt};
+                                           activation_dt};
         FusedOpsConfiguration conf_leftovers = {"_LEFTOVERS",
                                                 {"global_id", "LWS * ITEMS_NUM", "0", "0"},
                                                 "dequantized",
-                                                input_dt};
+                                                activation_dt};
         jit.Merge(MakeFusedOpsJitConstants(params, {conf_main, conf_leftovers}));
     }
 

@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -12,6 +12,7 @@ namespace kernel_selector {
 
 static const size_t SIMD = 16;
 static const size_t XY_OPT_F_LIMITS = 96;
+static const size_t AXIS_F = 1;
 static const size_t AXIS_Y = 2;
 static const size_t AXIS_X = 3;
 using NDims = std::vector<kernel_selector::Tensor::Dim>;
@@ -78,6 +79,15 @@ static bool can_opt_reduce_xy(const reduce_params& params) {
         input_dims[1].v <= XY_OPT_F_LIMITS;
 }
 
+static bool reducing_unaligned_f_axis(const reduce_params& params) {
+    if (count(params.reduceAxes.begin(), params.reduceAxes.end(), AXIS_F) > 0) {
+        if (params.inputs[0].Feature().v % 16 != 0)
+            return true;
+    }
+
+    return false;
+}
+
 ParamsKey ReduceKernel_b_fs_yx_fsv16::GetSupportedKey() const {
     ParamsKey k;
     k.EnableInputDataType(Datatype::F16);
@@ -99,8 +109,8 @@ ParamsKey ReduceKernel_b_fs_yx_fsv16::GetSupportedKey() const {
     return k;
 }
 
-DeviceFeaturesKey ReduceKernel_b_fs_yx_fsv16::get_required_device_features_key(const Params& params, const optional_params& options) const {
-    auto k = get_common_subgroups_device_features_key(params, options);
+DeviceFeaturesKey ReduceKernel_b_fs_yx_fsv16::get_required_device_features_key(const Params& params) const {
+    auto k = get_common_subgroups_device_features_key(params);
     k.requires_subgroup_reduce();
     k.requires_subgroup_shuffle();
     k.requires_subgroup_shuffle_relative();
@@ -108,7 +118,7 @@ DeviceFeaturesKey ReduceKernel_b_fs_yx_fsv16::get_required_device_features_key(c
     return k;
 }
 
-CommonDispatchData ReduceKernel_b_fs_yx_fsv16::SetDefault(const reduce_params& params, const optional_params&) const {
+CommonDispatchData ReduceKernel_b_fs_yx_fsv16::SetDefault(const reduce_params& params) const {
     CommonDispatchData dispatchData;
 
     auto in_dims = calc_in_dims(params);
@@ -216,13 +226,25 @@ JitConstants ReduceKernel_b_fs_yx_fsv16::GetJitConstants(const reduce_params& pa
         }
     }
 
+    // Some reduction modes are affected by 0 value (e.g. min, max, prod ...)
+    bool zero_invariant_mode = params.reduceMode == ReduceMode::L1 || params.reduceMode == ReduceMode::L2 ||
+                               params.reduceMode == ReduceMode::LOG_SUM || params.reduceMode == ReduceMode::LOG_SUM_EXP ||
+                               params.reduceMode == ReduceMode::MEAN || params.reduceMode == ReduceMode::OR ||
+                               params.reduceMode == ReduceMode::SUM || params.reduceMode == ReduceMode::SUM_SQUARE;
+
+    if (zero_invariant_mode && reducing_unaligned_f_axis(params)) {
+        jit.AddConstant(MakeJitConstant("ZERO_INVARIANT_REDUCTION", 1));
+    }
+
     return jit;
 }
 
-KernelsData ReduceKernel_b_fs_yx_fsv16::GetKernelsData(const Params& params, const optional_params& options) const {
-    KernelsData kds = GetCommonKernelsData(params, options);
+KernelsData ReduceKernel_b_fs_yx_fsv16::GetKernelsData(const Params& params) const {
+    KernelsData kds = GetCommonKernelsData(params);
     const reduce_params& orgParams = static_cast<const reduce_params&>(params);
 
+    // To get perf gain of reduction of un-aligned f axis,
+    // Reduce kernel uses 0 value out of range in inner block by disabling re-use memory
     if (orgParams.inputs[0].Feature().v % 16 != 0) {
         kds[0].can_reuse_memory = false;
     }
@@ -230,7 +252,7 @@ KernelsData ReduceKernel_b_fs_yx_fsv16::GetKernelsData(const Params& params, con
     return kds;
 }
 
-KernelsPriority ReduceKernel_b_fs_yx_fsv16::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority ReduceKernel_b_fs_yx_fsv16::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_6;
 }
 }  // namespace kernel_selector

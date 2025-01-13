@@ -1,21 +1,20 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <transformations_visibility.hpp>
-
+#include "openvino/op/multiclass_nms.hpp"
 #include "openvino/op/util/multiclass_nms_base.hpp"
-#include "openvino/opsets/opset9.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 namespace op {
 namespace internal {
 
-class TRANSFORMATIONS_API MulticlassNmsIEInternal : public opset9::MulticlassNms {
+class TRANSFORMATIONS_API MulticlassNmsIEInternal : public ov::op::v9::MulticlassNms {
 public:
-    OPENVINO_OP("MulticlassNmsIEInternal", "ie_internal_opset", opset9::MulticlassNms);
+    OPENVINO_OP("MulticlassNmsIEInternal", "ie_internal_opset", ov::op::v9::MulticlassNms);
 
     MulticlassNmsIEInternal() = default;
 
@@ -35,11 +34,3 @@ public:
 }  // namespace internal
 }  // namespace op
 }  // namespace ov
-
-namespace ngraph {
-namespace op {
-namespace internal {
-using ov::op::internal::MulticlassNmsIEInternal;
-}  // namespace internal
-}  // namespace op
-}  // namespace ngraph

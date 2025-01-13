@@ -1,15 +1,15 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "mask_attribute.hpp"
 
 #include <functional>
-#include <ngraph/node.hpp>
-#include <ngraph/variant.hpp>
 #include <ostream>
 
-namespace ngraph {
+#include "openvino/core/node.hpp"
+
+namespace ov {
 
 Mask::Ptr getMask(const Output<const Node>& output) {
     auto& rtInfo = output.get_rt_info();
@@ -79,4 +79,4 @@ std::ostream& operator<<(std::ostream& out, const Mask& mask) {
     return out;
 }
 
-}  // namespace ngraph
+}  // namespace ov

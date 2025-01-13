@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -6,7 +6,7 @@
 #include "data_inst.h"
 #include "prior_box_inst.h"
 #include "input_layout_inst.h"
-#include "impls/implementation_map.hpp"
+#include "impls/registry/implementation_map.hpp"
 #include "register.hpp"
 #include "intel_gpu/graph/serialization/binary_buffer.hpp"
 #include <vector>
@@ -19,28 +19,25 @@ class wait_for_events_impl : public primitive_impl {
 
 public:
     explicit wait_for_events_impl(const program_node& /*node*/)
-        : primitive_impl(kernel_selector::weights_reorder_params{}, "wait_for_events") { }
+        : primitive_impl("wait_for_events") { }
 
     wait_for_events_impl() : primitive_impl() {}
 
-    DECLARE_OBJECT_TYPE_SERIALIZATION
+    DECLARE_OBJECT_TYPE_SERIALIZATION(cldnn::common::wait_for_events_impl)
 
     std::unique_ptr<primitive_impl> clone() const override {
         return make_unique<wait_for_events_impl>(*this);
     }
 
-    void init_kernels(const kernels_cache&) override {}
+    void init_kernels(const kernels_cache&, const kernel_impl_params&) override {}
     void set_arguments(primitive_inst& /*instance*/) override {}
-    void set_arguments(kernel_arguments_data_idx& /*instance*/) override {}
-    kernel_arguments_data get_arguments(const primitive_inst& /*instance*/) const override {
-        kernel_arguments_data args;
-        return args;
-    }
+    void set_arguments(primitive_inst& /*instance*/, kernel_arguments_data& /*args*/) override {}
     std::vector<layout> get_internal_buffer_layouts() const override { return {}; }
 
     event::ptr execute(const std::vector<event::ptr>& events, primitive_inst& instance) override {
         auto& stream = instance.get_network().get_stream();
-        return stream.enqueue_marker(events);
+
+        return stream.aggregate_events(events);
     }
 
     static std::unique_ptr<primitive_impl> create_data(const data_node& data, const kernel_impl_params&) {
@@ -51,12 +48,7 @@ public:
         return make_unique<wait_for_events_impl>(input);
     }
 
-    static std::unique_ptr<primitive_impl> create_prior_box(const prior_box_node& prior_box, const kernel_impl_params&) {
-        // This primitive is being executed on CPU during network compilation.
-        return make_unique<wait_for_events_impl>(prior_box);
-    }
-
-    void update_dispatch_data(const kernel_impl_params& impl_param) override { }
+    void update(primitive_inst& inst, const kernel_impl_params& impl_param) override { }
 };
 
 namespace detail {
@@ -69,12 +61,10 @@ attach_input_layout_common::attach_input_layout_common() {
     implementation_map<input_layout>::add(impl_types::common, shape_types::any, wait_for_events_impl::create_input_layout, {});
 }
 
-attach_prior_box_common::attach_prior_box_common() {
-    implementation_map<prior_box>::add(impl_types::common, wait_for_events_impl::create_prior_box, {});
-}
-
 }  // namespace detail
 }  // namespace common
 }  // namespace cldnn
 
 BIND_BINARY_BUFFER_WITH_TYPE(cldnn::common::wait_for_events_impl)
+BIND_BINARY_BUFFER_WITH_TYPE(cldnn::data)
+BIND_BINARY_BUFFER_WITH_TYPE(cldnn::input_layout)

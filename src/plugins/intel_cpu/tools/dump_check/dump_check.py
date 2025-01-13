@@ -1,12 +1,12 @@
 #!/usr/bin/python3
 
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 from openvino.runtime import Core, Model, Tensor, PartialShape, Type
 from openvino.runtime import opset8 as opset
 from openvino.runtime.op import Constant, Parameter, tensor_iterator
-from openvino.runtime.passes import Manager
+from openvino.runtime.passes import Manager, Serialize
 from openvino.runtime.utils.types import get_dtype
 import openvino as ov
 import numpy as np
@@ -53,7 +53,7 @@ def mkdirp(d):
 
 def fill_tensors_with_random(input):
     dtype = get_dtype(input.get_element_type())
-    rand_min, rand_max = (0, 1) if dtype == np.bool else (np.iinfo(np.uint8).min, np.iinfo(np.uint8).max)
+    rand_min, rand_max = (0, 1) if dtype == bool else (np.iinfo(np.uint8).min, np.iinfo(np.uint8).max)
     # np.random.uniform excludes high: add 1 to have it generated
     if np.dtype(dtype).kind in ['i', 'u', 'b']:
         rand_max += 1
@@ -75,13 +75,14 @@ def fill_tensors_from_image(input, input_file):
 
 class IEB:
     precision_table = {
-        10:(np.float32, 4),
-        40:(np.uint8, 1),
-        50:(np.int8, 1),
-        70:(np.int32, 4),
-        74:(np.uint32, 4),
-        72:(np.int64, 8),
-        73:(np.uint64, 8)
+        5:(np.float32, 4),
+        3:(np.int16, 2),
+        14:(np.uint8, 1),
+        8:(np.int8, 1),
+        10:(np.int32, 4),
+        15:(np.uint32, 4),
+        11:(np.int64, 8),
+        17:(np.uint64, 8)
     }
 
     @classmethod
@@ -90,12 +91,12 @@ class IEB:
         fmt = "@4sHBB7IB3BLLLL"
 
         magic, ver = b'IEB0', 256
-        
+
         precision = -1
         for k,v in IEB.precision_table.items():
             if (v[0] == nparray.dtype):
                 precision = k
-        
+
         assert(precision >= 0)
 
         ndims = len(nparray.shape)
@@ -112,7 +113,7 @@ class IEB:
                            dims[0], dims[1], dims[2], dims[3], dims[4], dims[5], dims[6],
                            scaling_axis, reserved[0], reserved[1], reserved[2],
                            data_offset, data_size, scaling_data_offset, scaling_data_size)
-        
+
         with open(ieb_file,"wb") as f:
             f.write(header)
             f.write(nparray.tobytes())
@@ -131,12 +132,21 @@ class IEB:
 
             (dtype, type_size, ) = IEB.precision_table[self.precision]
             count = self.data_size//type_size
-            
+
             # recover the data as numpy array
             self.dims = np.array([self.dims0, self.dims1, self.dims2, self.dims3, self.dims4, self.dims5, self.dims6])
             self.dims = self.dims[0:self.ndims]
             self.value = np.frombuffer(data, dtype = dtype, count=count, offset=self.data_offset)
-            self.value = np.reshape(self.value, self.dims)
+            dims = self.dims
+            # bf16 blob is parsed with numpy with int16. Append 0 in lower/higer 16 bit 0 on little/big endian then view with float32 type.
+            if (dtype == np.int16):
+                zero_array=np.zeros(self.value.shape, dtype=dtype)
+                if (sys.byteorder == "little"):
+                    self.value=np.dstack((zero_array, self.value)).flatten()
+                else:
+                    self.value=np.dstack((self.value, zero_array)).flatten()
+                self.value=self.value.view(dtype=np.float32)
+            self.value = np.reshape(self.value, dims)
 
             # self.values = struct.unpack_from(f"@{count}{stype}", data, offset=self.data_offset)
             # print(self.values.shape, self.values.dtype)
@@ -147,20 +157,22 @@ class DumpIndex:
         (self.ExecIndex, self.Name, self.OriginalLayers, self.tag, self.itag, self.ieb_file) = args
 
 
-def dump_tensors(core, model, dump_dir = "./cpu_dump", dump_ports="OUT", device_target="CPU"):
+def dump_tensors(core, model, dump_dir = "./cpu_dump", dump_ports="OUT", device_target="CPU", infer_bf16=False, filter_type=""):
     os.environ["OV_CPU_BLOB_DUMP_DIR"] = dump_dir
     os.environ["OV_CPU_BLOB_DUMP_FORMAT"] = "BIN"
     os.environ["OV_CPU_BLOB_DUMP_NODE_PORTS"] = dump_ports
+    if filter_type != "":
+        os.environ["OV_CPU_BLOB_DUMP_NODE_TYPE"]  = filter_type
     mkdirp(dump_dir)
 
     device_config = {"PERF_COUNT": "NO",
-                "AFFINITY": "CORE",
                 "PERFORMANCE_HINT_NUM_REQUESTS":0,
-                "PERFORMANCE_HINT":"",
+                "PERFORMANCE_HINT":"LATENCY",
                 "INFERENCE_PRECISION_HINT": "f32",
                 "NUM_STREAMS":1,
                 "INFERENCE_NUM_THREADS":1}
-
+    if infer_bf16 == True:
+        device_config["INFERENCE_PRECISION_HINT"] = "bf16"
     print("compiling model with {}".format(device_config))
     exec_net = core.compile_model(model, device_target, device_config)
     req = exec_net.create_infer_request()
@@ -172,7 +184,7 @@ def dump_tensors(core, model, dump_dir = "./cpu_dump", dump_ports="OUT", device_
         print(f"  {i}")
 
     print("infer with dump..")
-    
+
     result = req.infer(inputs)
 
     # dump result as ieb, so even no dump_ports, you can still know
@@ -193,9 +205,9 @@ def dump_tensors(core, model, dump_dir = "./cpu_dump", dump_ports="OUT", device_
     xml_path = f"{base_name[-1]}.xml"
     bin_path = f"{base_name[-1]}.bin"
     pass_manager = Manager()
-    pass_manager.register_pass("Serialize", xml_path=xml_path, bin_path=bin_path)
+    pass_manager.register_pass(Serialize(path_to_xml=xml_path, path_to_bin=bin_path))
     pass_manager.run_passes(runtime_func)
-    
+
     print(f"{device_target} Runtime model (exec_graph) is serialized to {xml_path}.")
 
 
@@ -204,7 +216,7 @@ def visualize_diff_abs(diff_abs):
     cur_shape = diff_abs.shape
     if len(vis_abs.shape) > 3:
         vis_abs = vis_abs.reshape(-1,cur_shape[-2],cur_shape[-1])
-    
+
     fig, ax = plt.subplots()
 
     # first channel with diff
@@ -302,10 +314,10 @@ def compare_dumps(model, atol, rtol, visualize, dump_dir1, dump_dir2):
         if not f2:
             print("{}[  SKIPPED   ]: not found {} in {} {}".format(Colors.YELLOW, f1[-1], dump_dir2, Colors.END))
             continue
-        
+
         ieb_file1 = f1[-1]
         ieb_file2 = f2[-1]
-        # compare 
+        # compare
         ieb1 = IEB(os.path.join(dump_dir1, ieb_file1))
         ieb2 = IEB(os.path.join(dump_dir2, ieb_file2))
 
@@ -332,7 +344,7 @@ def compare_dumps(model, atol, rtol, visualize, dump_dir1, dump_dir2):
             info  = ""
             if (np.prod(diff_abs.shape) < 8):
                 info = "{} vs {}".format(ieb1.value.reshape(-1), ieb2.value.reshape(-1))
-            
+
             max_abs = np.amax(diff_abs[idx])
             max_idx = np.where(diff_abs[idx] >= max_abs)
             max_org = np.abs(ieb2.value)[idx][max_idx]
@@ -365,6 +377,10 @@ def compare_dump_file(ieb_file1, ieb_file2, visualize):
     else:
         diff_abs = np.abs(ieb1.value - ieb2.value)
 
+    if not np.all(diff_abs.shape):
+        print(" Shape{} has dim 0".format(ieb1.shape))
+        return
+
     max_abs = np.amax(diff_abs)
     max_idx = np.where(diff_abs >= max_abs)
     max_org = np.abs(ieb2.value)[max_idx]
@@ -385,6 +401,8 @@ def main():
     parser.add_argument("-v", action="store_true", help="visualize error")
     parser.add_argument("-p", "--ports", type=str, default="OUT", help="dump ports: OUT | ALL")
     parser.add_argument("dumps", type=str, default="", nargs="+", help="dump folders or files")
+    parser.add_argument("-bf16", help="Enables infer with BF16 precision", action='store_true')
+    parser.add_argument("-f", "--filter_op", type=str, default="", help="op type filter: Convolution | ConvolutionBackpropData")
     args = parser.parse_args()
 
     print(f"Read model {args.m}...")
@@ -392,7 +410,7 @@ def main():
     model = core.read_model(args.m)
 
     if len(args.dumps) == 1:
-        dump_tensors(core, model, args.dumps[0], args.ports)
+        dump_tensors(core, model, args.dumps[0],  args.ports, "CPU", args.bf16, args.filter_op)
     else:
         assert(len(args.dumps) == 2)
         if (os.path.isdir(args.dumps[0])):

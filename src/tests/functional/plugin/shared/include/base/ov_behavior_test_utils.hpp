@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -13,43 +13,62 @@
 
 #include <gtest/gtest.h>
 
-#include "ngraph_functions/subgraph_builders.hpp"
 
 #include "common_test_utils/test_common.hpp"
 #include "common_test_utils/test_constants.hpp"
 #include "common_test_utils/common_utils.hpp"
-#include "common_test_utils/crash_handler.hpp"
+#include "functional_test_utils/crash_handler.hpp"
 #include "common_test_utils/file_utils.hpp"
 
-#include "functional_test_utils/plugin_cache.hpp"
-#include "functional_test_utils/ov_plugin_cache.hpp"
+#include "common_test_utils/ov_plugin_cache.hpp"
 #include "functional_test_utils/skip_tests_config.hpp"
-#include "functional_test_utils/blob_utils.hpp"
 #include "functional_test_utils/summary/api_summary.hpp"
 #include "openvino/util/file_util.hpp"
+#include "common_test_utils/subgraph_builders/split_conv_concat.hpp"
+#include "common_test_utils/subgraph_builders/kso_func.hpp"
+#include "common_test_utils/subgraph_builders/single_concat_with_constant.hpp"
+#include "common_test_utils/subgraph_builders/concat_with_params.hpp"
+#include "common_test_utils/subgraph_builders/split_concat.hpp"
+
+#define MARK_MANDATORY_PROPERTY_FOR_HW_DEVICE(GET_TEST_NAME)                                            \
+    [](const testing::TestParamInfo<PropertiesParams>& info) {                                          \
+        std::string name = GET_TEST_NAME(info);                                                         \
+        return (sw_plugin_in_target_device(ov::test::utils::target_device) ? "" : "mandatory_") + name; \
+    }
+
+#define MARK_MANDATORY_API_FOR_HW_DEVICE_WITH_PARAM(GET_TEST_NAME)                                      \
+    [](const testing::TestParamInfo<std::string>& info) {                                               \
+        std::string name = GET_TEST_NAME(info);                                                         \
+        return (sw_plugin_in_target_device(ov::test::utils::target_device) ? "" : "mandatory_") + name; \
+    }
+
+#define MARK_MANDATORY_API_FOR_HW_DEVICE_WITHOUT_PARAM()                                                \
+    [](const testing::TestParamInfo<std::string>& info) {                                               \
+        return sw_plugin_in_target_device(ov::test::utils::target_device) ? "" : "mandatory_";          \
+    }
 
 namespace ov {
 namespace test {
 namespace behavior {
 
-inline std::shared_ptr<ngraph::Function> getDefaultNGraphFunctionForTheDevice(std::string targetDevice,
-                                                                              std::vector<size_t> inputShape = {1, 1, 32, 32},
-                                                                              ngraph::element::Type_t ngPrc = ngraph::element::Type_t::f32) {
-    // auto-batching (which now relies on the dim tracking) needs a ngraph function without reshapes in that
-    if (targetDevice.find(CommonTestUtils::DEVICE_BATCH) != std::string::npos)
-        return ngraph::builder::subgraph::makeConvPoolReluNoReshapes(inputShape, ngPrc);
-    else  // for compatibility with the GNA that fails on any other ngraph function
-        return ngraph::builder::subgraph::makeConvPoolRelu(inputShape, ngPrc);
+inline std::shared_ptr<ov::Model> getDefaultNGraphFunctionForTheDevice(std::vector<size_t> inputShape = {1, 2, 32, 32},
+                                                                              ov::element::Type_t ngPrc = ov::element::Type_t::f32) {
+    return ov::test::utils::make_split_concat(inputShape, ngPrc);
 }
 
-class APIBaseTest : public CommonTestUtils::TestsCommon {
+inline bool sw_plugin_in_target_device(std::string targetDevice) {
+    return (targetDevice.find("MULTI") != std::string::npos || targetDevice.find("BATCH") != std::string::npos ||
+            targetDevice.find("HETERO") != std::string::npos || targetDevice.find("AUTO") != std::string::npos);
+}
+
+class APIBaseTest : public ov::test::TestsCommon {
 private:
-    // place to jump in case of a crash
-    int jmpRes = 0;
     // in case of crash jump will be made and work will be continued
-    const std::unique_ptr<CommonTestUtils::CrashHandler> crashHandler = std::unique_ptr<CommonTestUtils::CrashHandler>(new CommonTestUtils::CrashHandler());
+    const std::unique_ptr<ov::test::utils::CrashHandler> crashHandler = std::unique_ptr<ov::test::utils::CrashHandler>(
+                                                                        new ov::test::utils::CrashHandler(ov::test::utils::CONFORMANCE_TYPE::api));
 
 protected:
+    double k = 1.0;
     std::string target_device = "";
     ov::test::utils::ov_entity api_entity = ov::test::utils::ov_entity::undefined;
     ov::test::utils::ApiSummary& api_summary = ov::test::utils::ApiSummary::getInstance();
@@ -61,18 +80,12 @@ public:
 
     void SetUp() override {
         set_api_entity();
-        api_summary.updateStat(api_entity, target_device, ov::test::utils::PassRate::Statuses::CRASHED);
-#ifdef _WIN32
-        jmpRes = setjmp(CommonTestUtils::env);
-#else
-        jmpRes = sigsetjmp(CommonTestUtils::env, 0);
-#endif
-        if (jmpRes == CommonTestUtils::JMP_STATUS::ok) {
-            crashHandler->StartTimer();
-        } else if (jmpRes == CommonTestUtils::JMP_STATUS::alarmErr) {
-            api_summary.updateStat(api_entity, target_device, ov::test::utils::PassRate::Statuses::HANGED);
-            GTEST_FAIL();
-        }
+        auto test_name = this->GetFullTestName();
+        k = test_name.find("_mandatory") != std::string::npos || test_name.find("mandatory_") != std::string::npos ? 1.0 : 0.0;
+        if (ov::test::utils::is_print_rel_influence_coef)
+            std::cout << "[ CONFORMANCE ] Influence coefficient: " << k << std::endl;
+        api_summary.updateStat(api_entity, target_device, ov::test::utils::PassRate::Statuses::CRASHED, k);
+        crashHandler->StartTimer();
     }
 
     void TearDown() override {
@@ -80,11 +93,11 @@ public:
             set_api_entity();
         }
         if (this->HasFailure()) {
-            api_summary.updateStat(api_entity, target_device, ov::test::utils::PassRate::Statuses::FAILED);
+            api_summary.updateStat(api_entity, target_device, ov::test::utils::PassRate::Statuses::FAILED, k);
         } else if (this->IsSkipped()) {
-            api_summary.updateStat(api_entity, target_device, ov::test::utils::PassRate::Statuses::SKIPPED);
+            api_summary.updateStat(api_entity, target_device, ov::test::utils::PassRate::Statuses::SKIPPED, k);
         } else {
-            api_summary.updateStat(api_entity, target_device, ov::test::utils::PassRate::Statuses::PASSED);
+            api_summary.updateStat(api_entity, target_device, ov::test::utils::PassRate::Statuses::PASSED, k);
         }
     }
 };
@@ -126,7 +139,7 @@ public:
         std::ostringstream result;
         result << "targetDevice=" << targetDevice << "_";
         if (!configuration.empty()) {
-            using namespace CommonTestUtils;
+            using namespace ov::test::utils;
             for (auto &configItem : configuration) {
                 result << "configItem=" << configItem.first << "_";
                 configItem.second.print(result);
@@ -140,7 +153,7 @@ public:
         // Skip test according to plugin specific disabledTestPatterns() (if any)
         SKIP_IF_CURRENT_TEST_IS_DISABLED()
         APIBaseTest::SetUp();
-        function = ov::test::behavior::getDefaultNGraphFunctionForTheDevice(target_device);
+        function = ov::test::behavior::getDefaultNGraphFunctionForTheDevice();
         ov::AnyMap params;
         for (auto&& v : configuration) {
             params.emplace(v.first, v.second);
@@ -150,7 +163,7 @@ public:
 
     void TearDown() override {
         if (!configuration.empty()) {
-            PluginCache::get().reset();
+            ov::test::utils::PluginCache::get().reset();
         }
         APIBaseTest::TearDown();
     }
@@ -163,41 +176,44 @@ protected:
     std::shared_ptr<ov::Model> function;
 };
 
+// DEPRECATED
+// Replace the usage by `ov::test::utils::create_core()`
+// in NVIDIA and NPU plugin
 inline ov::Core createCoreWithTemplate() {
     ov::test::utils::PluginCache::get().reset();
     ov::Core core;
 #ifndef OPENVINO_STATIC_LIBRARY
     std::string pluginName = "openvino_template_plugin";
-    pluginName += IE_BUILD_POSTFIX;
-    core.register_plugin(ov::util::make_plugin_library_name(CommonTestUtils::getExecutableDirectory(), pluginName),
-        CommonTestUtils::DEVICE_TEMPLATE);
+    pluginName += OV_BUILD_POSTFIX;
+    core.register_plugin(ov::util::make_plugin_library_name(ov::test::utils::getExecutableDirectory(), pluginName),
+        ov::test::utils::DEVICE_TEMPLATE);
 #endif // !OPENVINO_STATIC_LIBRARY
     return core;
 }
 
 class OVClassNetworkTest {
 public:
-    std::shared_ptr<ngraph::Function> actualNetwork, simpleNetwork, multinputNetwork, ksoNetwork;
+    std::shared_ptr<ov::Model> actualNetwork, simpleNetwork, multinputNetwork, ksoNetwork;
 
     void SetUp() {
         SKIP_IF_CURRENT_TEST_IS_DISABLED();
         // Generic network
-        actualNetwork = ngraph::builder::subgraph::makeSplitConvConcat();
+        actualNetwork = ov::test::utils::make_split_concat();
         // Quite simple network
-        simpleNetwork = ngraph::builder::subgraph::makeSingleConv();
+        simpleNetwork = ov::test::utils::make_single_concat_with_constant();
         // Multinput to substruct network
-        multinputNetwork = ngraph::builder::subgraph::make2InputSubtract();
+        multinputNetwork = ov::test::utils::make_concat_with_params();
         // Network with KSO
-        ksoNetwork = ngraph::builder::subgraph::makeKSOFunction();
+        ksoNetwork = ov::test::utils::make_kso_function();
     }
 
     virtual void setHeteroNetworkAffinity(const std::string &targetDevice) {
         const std::map<std::string, std::string> deviceMapping = {{"Split_2",       targetDevice},
                                                                   {"Convolution_4", targetDevice},
-                                                                  {"Convolution_7", CommonTestUtils::DEVICE_CPU},
-                                                                  {"Relu_5",        CommonTestUtils::DEVICE_CPU},
+                                                                  {"Convolution_7", ov::test::utils::DEVICE_CPU},
+                                                                  {"Relu_5",        ov::test::utils::DEVICE_CPU},
                                                                   {"Relu_8",        targetDevice},
-                                                                  {"Concat_9",      CommonTestUtils::DEVICE_CPU}};
+                                                                  {"Concat_9",      ov::test::utils::DEVICE_CPU}};
 
         for (const auto &op : actualNetwork->get_ops()) {
             auto it = deviceMapping.find(op->get_friendly_name());
@@ -217,12 +233,11 @@ public:
         target_device = GetParam();
         SKIP_IF_CURRENT_TEST_IS_DISABLED();
         APIBaseTest::SetUp();
-        // TODO: Remove it after fixing issue 69529
-        // w/a for myriad (cann't store 2 caches simultaneously)
-        PluginCache::get().reset();
         OVClassNetworkTest::SetUp();
     }
 };
+using OVClassModelTestP = OVClassBaseTestP;
+using OVClassModelOptionalTestP = OVClassBaseTestP;
 
 class OVCompiledModelClassBaseTestP : public OVClassNetworkTest,
                                       public ::testing::WithParamInterface<std::string>,
@@ -232,42 +247,41 @@ public:
         target_device = GetParam();
         SKIP_IF_CURRENT_TEST_IS_DISABLED();
         APIBaseTest::SetUp();
-        // TODO: Remove it after fixing issue 69529
-        // w/a for myriad (cann't store 2 caches simultaneously)
-        PluginCache::get().reset();
         OVClassNetworkTest::SetUp();
     }
 };
 
-using PriorityParams = std::tuple<
-        std::string,            // Device name
-        ov::AnyMap              // device priority Configuration key
->;
-class OVClassExecutableNetworkGetMetricTest_Priority : public ::testing::WithParamInterface<PriorityParams>,
-                                                       public OVCompiledNetworkTestBase {
+class OVClassSetDevicePriorityConfigPropsTest : public OVPluginTestBase,
+                                                public ::testing::WithParamInterface<std::tuple<std::string, AnyMap>> {
 protected:
+    std::string deviceName;
     ov::AnyMap configuration;
-    std::shared_ptr<ngraph::Function> simpleNetwork;
+    std::shared_ptr<ov::Model> actualNetwork;
 
 public:
     void SetUp() override {
         std::tie(target_device, configuration) = GetParam();
         SKIP_IF_CURRENT_TEST_IS_DISABLED();
         APIBaseTest::SetUp();
-        simpleNetwork = ngraph::builder::subgraph::makeSingleConv();
+        actualNetwork = ov::test::utils::make_split_conv_concat();
     }
 };
-using OVClassExecutableNetworkGetMetricTest_DEVICE_PRIORITY = OVClassExecutableNetworkGetMetricTest_Priority;
-using OVClassExecutableNetworkGetMetricTest_MODEL_PRIORITY = OVClassExecutableNetworkGetMetricTest_Priority;
 
-#define SKIP_IF_NOT_IMPLEMENTED(...)                   \
-{                                                      \
-    try {                                              \
-        __VA_ARGS__;                                   \
-    } catch (const InferenceEngine::NotImplemented&) { \
-        GTEST_SKIP();                                  \
-    }                                                  \
-}
+class OVClassSeveralDevicesTests : public OVPluginTestBase,
+                                   public OVClassNetworkTest,
+                                   public ::testing::WithParamInterface<std::vector<std::string>> {
+public:
+    std::vector<std::string> target_devices;
+
+    void SetUp() override {
+        target_device = ov::test::utils::DEVICE_MULTI;
+        SKIP_IF_CURRENT_TEST_IS_DISABLED()
+        APIBaseTest::SetUp();
+        OVClassNetworkTest::SetUp();
+        target_devices = GetParam();
+    }
+};
+
 } // namespace behavior
 } // namespace test
 } // namespace ov

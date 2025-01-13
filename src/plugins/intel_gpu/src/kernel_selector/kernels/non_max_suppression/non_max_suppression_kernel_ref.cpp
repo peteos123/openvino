@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -128,55 +128,45 @@ JitConstants NonMaxSuppressionKernelRef::GetJitConstants(const non_max_suppressi
 
     jit.AddConstant(MakeJitConstant("OUTPUT_NUM", params.outputs[0].Batch().v));
 
-    if (params.num_select_per_class_type == NmsArgType::Input) {
+    if (params.num_select_per_class_type == base_params::ArgType::Input) {
         jit.AddConstant(MakeJitConstant("NUM_SELECT_PER_CLASS_TYPE", GetInputTypeStr(params.GetIndexNumSelectPerClass())));
         jit.AddConstant(MakeJitConstant("NUM_SELECT_PER_CLASS_VAL", "convert_int(num_select_per_class[0])"));
     } else {
         jit.AddConstant(MakeJitConstant("NUM_SELECT_PER_CLASS_VAL", params.num_select_per_class));
     }
 
-    if (params.iou_threshold_type == NmsArgType::Input) {
+    if (params.iou_threshold_type == base_params::ArgType::Input) {
         jit.AddConstant(MakeJitConstant("IOU_THRESHOLD_TYPE", GetInputTypeStr(params.GetIndexIouThreshold())));
         jit.AddConstant(MakeJitConstant("IOU_THRESHOLD_VAL", "convert_float(iou_threshold[0])"));
     } else {
         jit.AddConstant(MakeJitConstant("IOU_THRESHOLD_VAL", params.iou_threshold));
     }
 
-    if (params.score_threshold_type == NmsArgType::Input) {
+    if (params.score_threshold_type == base_params::ArgType::Input) {
         jit.AddConstant(MakeJitConstant("SCORE_THRESHOLD_TYPE", GetInputTypeStr(params.GetIndexScoreThreshold())));
         jit.AddConstant(MakeJitConstant("SCORE_THRESHOLD_VAL", "convert_float(score_threshold[0])"));
     } else {
         jit.AddConstant(MakeJitConstant("SCORE_THRESHOLD_VAL", params.score_threshold));
     }
 
-    if (params.soft_nms_sigma_type == NmsArgType::Input) {
-        jit.AddConstant(MakeJitConstant("SOFT_NMS_SIGMA_TYPE", GetInputTypeStr(params.GetIndexSoftNmsSigma())));
-        jit.AddConstant(MakeJitConstant("SOFT_NMS_SIGMA_VAL", "convert_float(soft_nms_sigma[0])"));
+    if (params.rotation == NMSRotationType::NONE) {
+        if (params.soft_nms_sigma_type == base_params::ArgType::Input) {
+            jit.AddConstant(MakeJitConstant("SOFT_NMS_SIGMA_TYPE", GetInputTypeStr(params.GetIndexSoftNmsSigma())));
+            jit.AddConstant(MakeJitConstant("SOFT_NMS_SIGMA_VAL", "convert_float(soft_nms_sigma[0])"));
+        } else {
+            jit.AddConstant(MakeJitConstant("SOFT_NMS_SIGMA_VAL", params.soft_nms_sigma));
+        }
     } else {
-        jit.AddConstant(MakeJitConstant("SOFT_NMS_SIGMA_VAL", params.soft_nms_sigma));
-    }
-
-    if (params.has_second_output) {
-        jit.AddConstant(MakeJitConstant("SECOND_OUTPUT_TYPE", GetInputTypeStr(params.GetIndexSecondOutput())));
-        jit.AddConstant(MakeJitConstant("TO_SECOND_OUTPUT_TYPE", GetToInputTypeStr(params.GetIndexSecondOutput())));
-        jit.AddConstant(MakeJitConstant("SECOND_OUTPUT_GET_INDEX", GetToInputIndexStr(params.GetIndexSecondOutput())));
-    }
-
-    if (params.has_third_output) {
-        jit.AddConstant(MakeJitConstant("THIRD_OUTPUT_TYPE", GetInputTypeStr(params.GetIndexThirdOutput())));
-        jit.AddConstant(MakeJitConstant("TO_THIRD_OUTPUT_TYPE", GetToInputTypeStr(params.GetIndexThirdOutput())));
-        jit.AddConstant(MakeJitConstant("THIRD_OUTPUT_GET_INDEX", GetToInputIndexStr(params.GetIndexThirdOutput())));
-    }
-
-    if (params.use_multiple_outputs) {
-        jit.AddConstant(MakeJitConstant("MULTIPLE_OUTPUTS", 1));
+        jit.AddConstant(MakeJitConstant("ROTATION", static_cast<int>(params.rotation)));
+        // for NMSRotated it is always zero
+        jit.AddConstant(MakeJitConstant("SOFT_NMS_SIGMA_VAL", 0.0f));
     }
 
     return jit;
 }
 
-bool NonMaxSuppressionKernelRef::Validate(const Params& p, const optional_params& o) const {
-    if (p.GetType() != KernelType::NON_MAX_SUPPRESSION || o.GetType() != KernelType::NON_MAX_SUPPRESSION) {
+bool NonMaxSuppressionKernelRef::Validate(const Params& p) const {
+    if (p.GetType() != KernelType::NON_MAX_SUPPRESSION) {
         return false;
     }
 
@@ -205,7 +195,7 @@ void NonMaxSuppressionKernelRef::SetKernelArguments(const non_max_suppression_pa
         kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INPUT, 1 });
         kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INTERNAL_BUFFER, 0 });
         kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INTERNAL_BUFFER, 2 });
-        if (params.score_threshold_type == NmsArgType::Input)
+        if (params.score_threshold_type == base_params::ArgType::Input)
             kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INPUT, params.GetIndexScoreThreshold() });
         break;
 
@@ -220,13 +210,13 @@ void NonMaxSuppressionKernelRef::SetKernelArguments(const non_max_suppression_pa
         kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INTERNAL_BUFFER, 1 });
         kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INTERNAL_BUFFER, 2 });
 
-        if (params.num_select_per_class_type == NmsArgType::Input)
+        if (params.num_select_per_class_type == base_params::ArgType::Input)
             kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INPUT, params.GetIndexNumSelectPerClass() });
-        if (params.iou_threshold_type == NmsArgType::Input)
+        if (params.iou_threshold_type == base_params::ArgType::Input)
             kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INPUT, params.GetIndexIouThreshold() });
-        if (params.score_threshold_type == NmsArgType::Input)
+        if (params.score_threshold_type == base_params::ArgType::Input)
             kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INPUT, params.GetIndexScoreThreshold() });
-        if (params.soft_nms_sigma_type == NmsArgType::Input)
+        if (params.soft_nms_sigma_type == base_params::ArgType::Input)
             kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INPUT, params.GetIndexSoftNmsSigma() });
         break;
 
@@ -234,15 +224,10 @@ void NonMaxSuppressionKernelRef::SetKernelArguments(const non_max_suppression_pa
         kernel.params.arguments.push_back({ ArgumentDescriptor::Types::OUTPUT, 0 });
         kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INTERNAL_BUFFER, 1 });
         kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INTERNAL_BUFFER, 0 });
-
-        if (params.has_second_output)
-            kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INPUT, params.GetIndexSecondOutput() });
-        if (params.has_third_output)
-            kernel.params.arguments.push_back({ ArgumentDescriptor::Types::INPUT, params.GetIndexThirdOutput() });
-        if (params.use_multiple_outputs) {
-            kernel.params.arguments.push_back({ ArgumentDescriptor::Types::OUTPUT, 1 });
-            kernel.params.arguments.push_back({ ArgumentDescriptor::Types::OUTPUT, 2 });
+        for (size_t i = 1; i < params.outputs.size(); i++) {
+            kernel.params.arguments.push_back({ ArgumentDescriptor::Types::OUTPUT, static_cast<uint32_t>(i) });
         }
+
         break;
 
     default:
@@ -250,8 +235,8 @@ void NonMaxSuppressionKernelRef::SetKernelArguments(const non_max_suppression_pa
     }
 }
 
-KernelsData NonMaxSuppressionKernelRef::GetKernelsData(const Params& params, const optional_params& options) const {
-    if (!Validate(params, options)) {
+KernelsData NonMaxSuppressionKernelRef::GetKernelsData(const Params& params) const {
+    if (!Validate(params)) {
         return {};
     }
 
@@ -276,7 +261,7 @@ KernelsData NonMaxSuppressionKernelRef::GetKernelsData(const Params& params, con
     // Build clKernelData.
     for (size_t i = 0; i < kKernelsNum; i++) {
         DispatchData dispatchData = SetDefault(orgParams, static_cast<int>(i));
-        auto entry_point = GetEntryPoint(kernelName, orgParams.layerID, params, options, i);
+        auto entry_point = GetEntryPoint(kernelName, orgParams.layerID, params, i);
         auto cldnn_jit = GetJitConstants(orgParams);
         cldnn_jit.AddConstant(MakeJitConstant("BUFFER_STRIDE", buffer_stride));
 
@@ -292,6 +277,8 @@ KernelsData NonMaxSuppressionKernelRef::GetKernelsData(const Params& params, con
                                    , MakeJitConstant("LOCAL_CLASS_NUM", dispatchData.lws[1])
                                    , MakeJitConstant("LOCAL_WORK_NUM", dispatchData.lws[2])
                                    , MakeJitConstant("PARTITION_STEP", GetPartitionStep(static_cast<int>(dispatchData.lws[2])))});
+        } else if (i == 2 && orgParams.reuse_internal_buffer) {
+            cldnn_jit.AddConstant({ MakeJitConstant("REUSE_INTERNAL_BUFFER", 1)});
         }
         cldnn_jit.AddConstant(MakeJitConstant("NMS_STAGE_" + std::to_string(i), "true"));
 
@@ -307,7 +294,7 @@ KernelsData NonMaxSuppressionKernelRef::GetKernelsData(const Params& params, con
     return {kd};
 }
 
-KernelsPriority NonMaxSuppressionKernelRef::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority NonMaxSuppressionKernelRef::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_9;
 }
 }  // namespace kernel_selector

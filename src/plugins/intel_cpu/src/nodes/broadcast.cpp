@@ -1,20 +1,20 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include <cmath>
-#include <vector>
-#include <string>
-#include <dnnl_types.h>
-#include "ie_parallel.hpp"
-#include "utils/bfloat16.hpp"
-#include <selective_build.h>
 #include "broadcast.h"
-#include <nodes/common/blocked_desc_creator.h>
-#include <ngraph/opsets/opset1.hpp>
-#include "common/cpu_memcpy.h"
 
-using namespace InferenceEngine;
+#include <selective_build.h>
+
+#include <string>
+#include <vector>
+
+#include "common/cpu_memcpy.h"
+#include "dnnl_types.h"
+#include "nodes/common/blocked_desc_creator.h"
+#include "openvino/core/parallel.hpp"
+#include "openvino/opsets/opset1.hpp"
+#include "utils/ngraph_utils.hpp"
 
 namespace ov {
 namespace intel_cpu {
@@ -27,19 +27,20 @@ bool Broadcast::isSupportedOperation(const std::shared_ptr<const ov::Node>& op, 
             return false;
         }
         if (!one_of(ov::as_type_ptr<const ov::op::v1::Broadcast>(op)->get_broadcast_spec().m_type,
-                ov::op::AutoBroadcastType::NUMPY, ov::op::AutoBroadcastType::EXPLICIT)) {
+                    ov::op::AutoBroadcastType::NUMPY,
+                    ov::op::AutoBroadcastType::EXPLICIT)) {
             errorMessage = "Only NUMPY and EXPLICIT broadcast types are supported.";
             return false;
         }
         if (op->get_input_partial_shape(TARGET_SHAPE_IDX).is_dynamic() ||
-                (op->get_input_size() > AXES_MAPPING_IDX && op->get_input_partial_shape(AXES_MAPPING_IDX).is_dynamic())) {
+            (op->get_input_size() > AXES_MAPPING_IDX && op->get_input_partial_shape(AXES_MAPPING_IDX).is_dynamic())) {
             errorMessage = "Only static shapes are supported for target shape and axes mapping inputs.";
             return false;
         }
         if (!isDynamicNgraphNode(op) &&
-                (!ov::is_type<ov::op::v0::Constant>(op->get_input_node_ptr(TARGET_SHAPE_IDX)) ||
-                 (op->get_input_size() > AXES_MAPPING_IDX &&
-                 !ov::is_type<ov::op::v0::Constant>(op->get_input_node_ptr(AXES_MAPPING_IDX))))) {
+            (!ov::is_type<ov::op::v0::Constant>(op->get_input_node_ptr(TARGET_SHAPE_IDX)) ||
+             (op->get_input_size() > AXES_MAPPING_IDX &&
+              !ov::is_type<ov::op::v0::Constant>(op->get_input_node_ptr(AXES_MAPPING_IDX))))) {
             errorMessage = "Only constant target shapes and axis mapping inputs are supported for static shapes.";
             return false;
         }
@@ -50,37 +51,38 @@ bool Broadcast::isSupportedOperation(const std::shared_ptr<const ov::Node>& op, 
 }
 
 Broadcast::Broadcast(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr context)
-    : Node(op, context, NgraphShapeInferFactory(op, PortMask(TARGET_SHAPE_IDX, AXES_MAPPING_IDX))) {
+    : Node(op, context, NgraphShapeInferFactory(op)) {
     std::string errorMessage;
     if (!isSupportedOperation(op, errorMessage)) {
-        IE_THROW(NotImplemented) << errorMessage;
+        OPENVINO_THROW_NOT_IMPLEMENTED(errorMessage);
     }
 
     errorPrefix = "Broadcast node with name '" + op->get_friendly_name() + "' ";
     if (op->get_input_size() != 2 && op->get_input_size() != 3)
-        IE_THROW() << errorPrefix << "has incorrect number of input edges: " << getParentEdges().size();
+        OPENVINO_THROW(errorPrefix, "has incorrect number of input edges: ", getParentEdges().size());
     if (op->get_output_size() == 0)
-        IE_THROW() << errorPrefix << "has no output edges.";
+        OPENVINO_THROW(errorPrefix, "has no output edges.");
 
     auto broadcastOp = ov::as_type_ptr<const ov::op::v1::Broadcast>(op);
     if (broadcastOp->get_broadcast_spec().m_type == ov::op::AutoBroadcastType::NUMPY) {
         broadcastType = NUMPY;
     } else if (broadcastOp->get_broadcast_spec().m_type == ov::op::AutoBroadcastType::EXPLICIT) {
         if (op->get_input_size() <= AXES_MAPPING_IDX)
-            IE_THROW() << errorPrefix << " and EXPLICIT mode must have tree input edges: " << getParentEdges().size();
+            OPENVINO_THROW(errorPrefix, " and EXPLICIT mode must have tree input edges: ", getParentEdges().size());
         broadcastType = EXPLICIT;
     } else {
-        IE_THROW() << errorPrefix << "has unexpected broadcast type: " << broadcastOp->get_broadcast_spec().m_type;
+        OPENVINO_THROW(errorPrefix, "has unexpected broadcast type: ", broadcastOp->get_broadcast_spec().m_type);
     }
 
     if (ov::is_type<ov::op::v0::Constant>(op->get_input_node_ptr(TARGET_SHAPE_IDX))) {
         constMap[TARGET_SHAPE_IDX] = true;
-        targetShape = (ov::as_type<ov::op::v0::Constant>(op->get_input_node_ptr(TARGET_SHAPE_IDX)))->get_vector<int32_t>();
+        targetShape =
+            (ov::as_type<ov::op::v0::Constant>(op->get_input_node_ptr(TARGET_SHAPE_IDX)))->get_vector<int32_t>();
     }
-    if (broadcastType == EXPLICIT &&
-                ov::is_type<ov::op::v0::Constant>(op->get_input_node_ptr(AXES_MAPPING_IDX))) {
+    if (broadcastType == EXPLICIT && ov::is_type<ov::op::v0::Constant>(op->get_input_node_ptr(AXES_MAPPING_IDX))) {
         constMap[AXES_MAPPING_IDX] = true;
-        axesMapping = ov::as_type<ov::op::v0::Constant>(op->get_input_node_ptr(AXES_MAPPING_IDX))->get_vector<int32_t>();
+        axesMapping =
+            ov::as_type<ov::op::v0::Constant>(op->get_input_node_ptr(AXES_MAPPING_IDX))->get_vector<int32_t>();
     }
 }
 
@@ -106,8 +108,7 @@ void Broadcast::getSupportedDescriptors() {
 void Broadcast::initSupportedPrimitiveDescriptors() {
     if (!supportedPrimitiveDescriptors.empty())
         return;
-
-    supportedPrimitiveDescriptors = getSupportedConfigs(this);
+    supportedPrimitiveDescriptors = getSupportedConfigs(this, outputShapes.size());
 }
 
 bool Broadcast::needPrepareParams() const {
@@ -116,22 +117,23 @@ bool Broadcast::needPrepareParams() const {
 
 void Broadcast::prepareParams() {
     if (!constMap[TARGET_SHAPE_IDX]) {
-        const auto& targetShapeMem = getParentEdgesAtPort(TARGET_SHAPE_IDX)[0]->getMemory();
-        const int32_t* targetShapeData = reinterpret_cast<const int32_t *>(targetShapeMem.GetPtr());
+        const auto& targetShapeMem = getParentEdgeAt(TARGET_SHAPE_IDX)->getMemory();
+        const int32_t* targetShapeData = targetShapeMem.getDataAs<const int32_t>();
         targetShape.assign(targetShapeData, targetShapeData + targetShapeMem.getStaticDims()[0]);
     }
     if (broadcastType == EXPLICIT && !constMap[AXES_MAPPING_IDX]) {
-        const auto& axesMapMem = getParentEdgesAtPort(AXES_MAPPING_IDX)[0]->getMemory();
-        const int32_t* axesMapData = reinterpret_cast<const int32_t *>(axesMapMem.GetPtr());
+        const auto& axesMapMem = getParentEdgeAt(AXES_MAPPING_IDX)->getMemory();
+        const int32_t* axesMapData = axesMapMem.getDataAs<const int32_t>();
         axesMapping.assign(axesMapData, axesMapData + axesMapMem.getStaticDims()[0]);
     }
 
-    const auto& srcDims = getParentEdgesAtPort(INPUT_DATA_IDX)[0]->getMemory().GetShape().getStaticDims();
+    const auto& srcDims = getParentEdgeAt(INPUT_DATA_IDX)->getMemory().getShape().getStaticDims();
     repeats.assign(targetShape.begin(), targetShape.end());
     const auto ndims = repeats.size();
 
-    auto srcBlockedDims = getParentEdgeAt(INPUT_DATA_IDX)->getMemory().GetDescWithType<BlockedMemoryDesc>()->getBlockDims();
-    auto dstBlockedDims = getChildEdgeAt(0)->getMemory().GetDescWithType<BlockedMemoryDesc>()->getBlockDims();
+    auto srcBlockedDims =
+        getParentEdgeAt(INPUT_DATA_IDX)->getMemory().getDescWithType<BlockedMemoryDesc>()->getBlockDims();
+    auto dstBlockedDims = getChildEdgeAt(0)->getMemory().getDescWithType<BlockedMemoryDesc>()->getBlockDims();
 
     if (broadcastType == NUMPY) {
         for (size_t i = 0lu; i < srcDims.size(); i++) {
@@ -142,7 +144,7 @@ void Broadcast::prepareParams() {
             repeats[axesMapping[i]] /= srcDims[i];
         }
 
-        SizeVector newSrcBlockedDims = SizeVector(dstBlockedDims.size(), 1);
+        VectorDims newSrcBlockedDims = VectorDims(dstBlockedDims.size(), 1);
         for (size_t i = 0; i < getInputShapeAtPort(AXES_MAPPING_IDX).getDims()[0]; i++) {
             newSrcBlockedDims[axesMapping[i]] = srcBlockedDims[i];
         }
@@ -162,7 +164,7 @@ bool Broadcast::needShapeInfer() const {
         if (targetShape.empty()) {
             return true;
         }
-        const int32_t* targetShapeData = reinterpret_cast<const int32_t *>(getParentEdgesAtPort(TARGET_SHAPE_IDX)[0]->getMemory().GetPtr());
+        const int32_t* targetShapeData = getSrcDataAtPortAs<const int32_t>(TARGET_SHAPE_IDX);
         for (size_t i = 0lu; i < targetShape.size(); i++) {
             if (targetShape[i] != targetShapeData[i]) {
                 return true;
@@ -173,7 +175,7 @@ bool Broadcast::needShapeInfer() const {
         if (axesMapping.empty()) {
             return true;
         }
-        const int32_t* axesMappingData = reinterpret_cast<const int32_t *>(getParentEdgesAtPort(AXES_MAPPING_IDX)[0]->getMemory().GetPtr());
+        const int32_t* axesMappingData = getSrcDataAtPortAs<const int32_t>(AXES_MAPPING_IDX);
         for (size_t i = 0lu; i < axesMapping.size(); i++) {
             if (axesMapping[i] != axesMappingData[i]) {
                 return true;
@@ -194,7 +196,7 @@ void Broadcast::executeDynamicImpl(dnnl::stream strm) {
 
 void Broadcast::execute(dnnl::stream strm) {
     if (optimizedCase) {
-        optimizedExecute(getParentEdgeAt(INPUT_DATA_IDX)->getMemoryPtr(), getChildEdgeAt(0)->getMemoryPtr());
+        optimizedExecute(getSrcMemoryAtPort(INPUT_DATA_IDX), getDstMemoryAtPort(0));
     } else {
         plainExecute(strm);
     }
@@ -203,10 +205,10 @@ void Broadcast::execute(dnnl::stream strm) {
 void Broadcast::plainExecute(dnnl::stream strm) {
     VectorDims srcDims = getParentEdgeAt(INPUT_DATA_IDX)->getMemory().getStaticDims();
     const auto& dstDims = getChildEdgeAt(0)->getMemory().getStaticDims();
-    const auto& dataSrcRank = getParentEdgeAt(INPUT_DATA_IDX)->getMemory().GetShape().getRank();
-    const auto& dataDstRank = getChildEdgeAt(0)->getMemory().GetShape().getRank();
+    const auto& dataSrcRank = getParentEdgeAt(INPUT_DATA_IDX)->getMemory().getShape().getRank();
+    const auto& dataDstRank = getChildEdgeAt(0)->getMemory().getShape().getRank();
 
-    auto srcDesc = getParentEdgeAt(INPUT_DATA_IDX)->getMemory().GetDescWithType<BlockedMemoryDesc>();
+    auto srcDesc = getParentEdgeAt(INPUT_DATA_IDX)->getMemory().getDescWithType<BlockedMemoryDesc>();
     VectorDims srcStrides = srcDesc->getStrides();
     const size_t dataSize = srcDesc->getPrecision().size();
 
@@ -215,7 +217,7 @@ void Broadcast::plainExecute(dnnl::stream strm) {
     if (!srcStrides.size())
         srcStrides = VectorDims(1, 1);
 
-    auto dstDesc = getChildEdgeAt(0)->getMemory().GetDescWithType<BlockedMemoryDesc>();
+    auto dstDesc = getChildEdgeAt(0)->getMemory().getDescWithType<BlockedMemoryDesc>();
     VectorDims dstStrides = dstDesc->getStrides();
     VectorDims srcAligned(dataDstRank);
     VectorDims srcStridesAligned(dataDstRank);
@@ -231,8 +233,8 @@ void Broadcast::plainExecute(dnnl::stream strm) {
     }
 
     const size_t workAmountDst = dstStrides[0] * dstDims[0];
-    const auto *srcData = reinterpret_cast<const uint8_t *>(getParentEdgeAt(INPUT_DATA_IDX)->getMemoryPtr()->GetPtr());
-    auto *dstData = reinterpret_cast<uint8_t *>(getChildEdgeAt(0)->getMemoryPtr()->GetPtr());
+    const auto* srcData = getSrcDataAtPortAs<const uint8_t>(INPUT_DATA_IDX);
+    auto* dstData = getDstDataAtPortAs<uint8_t>(0);
 
     parallel_nt(0, [&](const int ithr, const int nthr) {
         size_t i = 0lu, srcIdx = 0lu, start = 0lu, end = 0lu;
@@ -250,7 +252,8 @@ void Broadcast::plainExecute(dnnl::stream strm) {
 
             for (int j = dataDstRank - 1; j >= 0; j--) {
                 counters[j] = (counters[j] + 1) % dstDims[j];
-                if (counters[j] != 0) break;
+                if (counters[j] != 0)
+                    break;
             }
         }
     });
@@ -260,6 +263,6 @@ bool Broadcast::created() const {
     return getType() == Type::Broadcast;
 }
 
-}   // namespace node
-}   // namespace intel_cpu
-}   // namespace ov
+}  // namespace node
+}  // namespace intel_cpu
+}  // namespace ov

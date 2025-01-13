@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -15,6 +15,8 @@ namespace cldnn {
 struct reshape : public primitive_base<reshape> {
     CLDNN_DECLARE_PRIMITIVE(reshape)
 
+    reshape() : primitive_base("", {}) {}
+
     enum reshape_mode : uint32_t {
         base,
         squeeze,
@@ -27,13 +29,11 @@ struct reshape : public primitive_base<reshape> {
     /// @param output_shape Requested memory shape (excluding padding).
     /// A dimension could be 0, in this case,  the value is taken from the input tensor.
     /// At most one dimension of the new shape can be -1. In this case, the value is inferred from the size of the tensor and the remaining dimensions.
-    /// @param output_padding Requested memory padding.
     reshape(const primitive_id& id,
             const input_info& input,
             const tensor& output_shape,
-            reshape_mode mode = reshape_mode::base,
-            const padding& output_padding = padding())
-        : primitive_base(id, {input}, {output_padding})
+            reshape_mode mode = reshape_mode::base)
+        : primitive_base(id, {input})
         , output_shape(output_shape)
         , output_pattern({})
         , output_partial_shape({})
@@ -45,9 +45,8 @@ struct reshape : public primitive_base<reshape> {
             const input_info& pattern_id,
             bool special_zero,
             const ov::PartialShape& output_partial_shape,
-            reshape_mode mode = reshape_mode::base,
-            const padding& output_padding = padding())
-        : primitive_base(id, {input, pattern_id}, {output_padding})
+            reshape_mode mode = reshape_mode::base)
+        : primitive_base(id, {input, pattern_id})
         , output_shape(tensor())
         , special_zero(special_zero)
         , output_pattern({})
@@ -60,9 +59,8 @@ struct reshape : public primitive_base<reshape> {
             bool special_zero,
             const std::vector<int64_t>& output_pattern,
             const ov::PartialShape& output_partial_shape,
-            reshape_mode mode = reshape_mode::base,
-            const padding& output_padding = padding())
-        : primitive_base(id, {input}, {output_padding})
+            reshape_mode mode = reshape_mode::base)
+        : primitive_base(id, {input})
         , output_shape(tensor())
         , special_zero(special_zero)
         , output_pattern(output_pattern)
@@ -78,7 +76,35 @@ struct reshape : public primitive_base<reshape> {
 
     ov::PartialShape output_partial_shape;
 
-    reshape_mode mode;
+    reshape_mode mode = reshape_mode::base;
+
+    bool operator==(const primitive& rhs) const override {
+        if (!compare_common_params(rhs))
+            return false;
+
+        auto rhs_casted = downcast<const reshape>(rhs);
+
+        return special_zero == rhs_casted.special_zero &&
+               mode == rhs_casted.mode;
+    }
+
+    void save(BinaryOutputBuffer& ob) const override {
+        primitive_base<reshape>::save(ob);
+        ob << output_shape;
+        ob << special_zero;
+        ob << output_pattern;
+        ob << output_partial_shape;
+        ob << make_data(&mode, sizeof(reshape_mode));
+    }
+
+    void load(BinaryInputBuffer& ib) override {
+        primitive_base<reshape>::load(ib);
+        ib >> output_shape;
+        ib >> special_zero;
+        ib >> output_pattern;
+        ib >> output_partial_shape;
+        ib >> make_data(&mode, sizeof(reshape_mode));
+    }
 };
 
 }  // namespace cldnn

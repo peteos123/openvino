@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -13,6 +13,51 @@ namespace v0 {
 /// \brief Result operation.
 ///
 /// \ingroup ov_ops_cpp_api
+///
+/// The Result output tensor is special, it shares tensor with Result's input but requires to have dedicated properties
+/// like:
+/// - tensor names.
+///
+/// Setting/adding Result's output names modify this specific tensor names.
+/// Result's specific tensor names are added to input descriptor and transferred to new descriptor if Result's input
+/// has been replaced.
+///
+/// Examples 1: No specific names on Result's output
+///
+///  set output names:
+///        [N1]
+///         ↓
+/// |----------------|        [names: N1]         |-----------------|
+/// |      Node      |--------------------------->|     Result      |   -> Model output names: N1
+/// |----------------|                            |-----------------|
+///
+///
+/// Examples 2: Result's has got specific names
+///
+///  set output names:                             set output names:
+///        [N1]                                         [R1, R2]
+///         ↓                                              ↓
+/// |----------------|    [names: N1, R1, R2]     |-----------------|
+/// |      Node      |--------------------------->|     Result      |   -> Model output names: R1, R2
+/// |----------------|                            |-----------------|
+///
+///
+/// Examples 3: Result from example 2 connected to new node
+///
+///  set output names:                             set output names:
+///        [N2]                                         [R1, R2]
+///         ↓                                              ↓
+/// |----------------|    [names: N2, R1, R2]     |-----------------|
+/// |      Node      |--------------------------->|     Result      |   -> Model output names: R1, R2
+/// |----------------|                            |-----------------|
+///
+///  set output names:
+///        [N1]
+///         ↓
+/// |----------------|    [names: N1]
+/// |      Node      |----------------->
+/// |----------------|
+///
 class OPENVINO_API Result : public Op {
 public:
     OPENVINO_OP("Result", "opset1");
@@ -24,26 +69,19 @@ public:
     /// \param arg Node that produces the input tensor.
     Result(const Output<Node>& arg);
 
-    OPENVINO_DEPRECATED("This constructor is redundant, use Result(const Output<Node>& arg) instead.")
-    Result(const Output<Node>& arg, bool);
+    /// \brief Allows a value to be used as a function result.
+    ///
+    /// \param arg Node that produces the input tensor.
+    /// \param use_input_names  When true Result will use input node tensor names as Result's output names.
+    Result(const Output<Node>& arg, bool use_input_names);
 
-    bool visit_attributes(AttributeVisitor& visitor) override;
     void validate_and_infer_types() override;
 
     std::shared_ptr<Node> clone_with_new_inputs(const OutputVector& new_args) const override;
 
-    OPENVINO_DEPRECATED("This method provides no usage and has no replacement.")
-    void set_needs_default_layout(bool) {}
-    OPENVINO_DEPRECATED("This method provides no usage and has no replacement.")
-    bool needs_default_layout() const {
-        return false;
-    }
-
-    OPENVINO_SUPPRESS_DEPRECATED_START
-    bool evaluate(const HostTensorVector& outputs, const HostTensorVector& inputs) const override;
-    OPENVINO_SUPPRESS_DEPRECATED_END
+    bool evaluate(ov::TensorVector& outputs, const ov::TensorVector& inputs) const override;
     bool has_evaluate() const override;
-    bool constant_fold(OutputVector& output_values, const OutputVector& inputs_values) override;
+    bool can_constant_fold(const OutputVector& inputs_values) const override;
 
     /// \brief Returns current layout, or empty Layout if it is not set
     Layout get_layout() const;

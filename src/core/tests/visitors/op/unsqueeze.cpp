@@ -1,24 +1,24 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "gtest/gtest.h"
-#include "ngraph/ngraph.hpp"
-#include "ngraph/op/util/attr_types.hpp"
-#include "ngraph/opsets/opset1.hpp"
-#include "util/visitor.hpp"
+#include "openvino/op/unsqueeze.hpp"
+
+#include <gtest/gtest.h>
+
+#include "openvino/op/constant.hpp"
+#include "openvino/op/parameter.hpp"
+#include "visitors/visitors.hpp"
 
 using namespace std;
-using namespace ngraph;
-using ngraph::test::NodeBuilder;
+using namespace ov;
+using ov::test::NodeBuilder;
 
 TEST(attributes, unsqueeze_op) {
-    using namespace opset1;
+    NodeBuilder::opset().insert<op::v0::Unsqueeze>();
 
-    NodeBuilder::get_ops().register_factory<op::v0::Unsqueeze>();
-
-    auto param = make_shared<op::Parameter>(element::f32, Shape{4, 1, 4, 1, 8});
-    auto axes = make_shared<ngraph::op::Constant>(element::u64, Shape{2}, vector<int64_t>{1, 2});
+    auto param = make_shared<op::v0::Parameter>(element::f32, Shape{4, 1, 4, 1, 8});
+    auto axes = make_shared<ov::op::v0::Constant>(element::u64, Shape{2}, vector<int64_t>{1, 2});
     auto op = make_shared<op::v0::Unsqueeze>(param, axes);
 
     NodeBuilder builder(op, {param, axes});

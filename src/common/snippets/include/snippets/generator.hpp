@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -9,62 +9,32 @@
 #pragma once
 
 #include "snippets_isa.hpp"
-#include "emitter.hpp"
 
-namespace ngraph {
+#include "snippets/lowered/linear_ir.hpp"
+#include "snippets/kernel_executor_table.hpp"
+#include "snippets/shape_types.hpp"
+#include "target_machine.hpp"
+
+namespace ov {
 namespace snippets {
 
-auto getRegisters(std::shared_ptr<ngraph::Node>& n) -> ngraph::snippets::RegInfo;
 
+class Generator;
 /**
- * @interface TargetMachine
- * @brief Base class Target machine representation. Target derives from this class to provide generator information about supported emitters
- * @ingroup snippets
+ * @interface LoweringResult
+ * @brief Holds all relevant information produced during lowering
+ * @param compiled_snippet pointer to interface class that encapsulates compiled binary code
+ * Must be allocated and freed by the backend.
  */
-class TargetMachine {
+class LoweringResult {
+    friend class Generator;
+    // Some emitters rely on other precompiled kernels.
+    // We need to keep the pointers to such emitters alive, so the kernels or nodes would still be accessible at runtime.
+    std::vector<std::shared_ptr<Emitter>> m_saved_emitters{};
+
 public:
-    /**
-     * @brief checks if target is natively supported
-     * @return true, if supported
-     */
-    virtual bool is_supported() const = 0;
-
-    /**
-     * @brief finalizes code generation
-     * @return generated kernel binary
-     */
-    virtual code get_snippet() const = 0;
-
-    /**
-     * @brief gets number of lanes supported by target's vector ISA
-     * @return number of lanes
-     */
-    virtual size_t get_lanes() const = 0;
-
-
-    /**
-     * @brief called by generator to all the emitter for a target machine
-     * @return a map by node's type info with callbacks to create an instance of emitter for corresponding operation type
-     */
-    std::function<std::shared_ptr<Emitter>(std::shared_ptr<ngraph::Node>)> get(const ngraph::DiscreteTypeInfo type) const {
-        auto jitter = jitters.find(type);
-        if (jitter == jitters.end()) {
-            throw ngraph_error(std::string("Target code emitter is not available for ") + type.name + " operation.");
-        }
-        return jitter->second;
-    }
-
-    /**
-     * @brief checks if emitter for a specific operation is supported
-     * @return true, if supported
-     */
-    bool has(const ngraph::DiscreteTypeInfo type) const {
-        return jitters.find(type) != jitters.end();
-    }
-    virtual ~TargetMachine() = default;
-
-protected:
-    std::map<const ngraph::DiscreteTypeInfo, std::function<std::shared_ptr<Emitter>(std::shared_ptr<ngraph::Node>)>> jitters;
+    CompiledSnippetPtr compiled_snippet = nullptr;
+    KernelExecutorTablePtr kernel_executor_table = nullptr;
 };
 
 /**
@@ -74,27 +44,20 @@ protected:
  */
 class Schedule {
 public:
+    Schedule() = default;
     /**
-     * @brief Default constructor
+     * @brief Create schedule out of specific parameters
+     * @param lr lowering result produced during code generation
      */
-    Schedule() : work_size({}), is_flat(false), ptr(nullptr) {}
-    /**
-     * @brief Default to create schedule out of specific parameters
-     * @param ws work size for kernel execution
-     * @param f can this kernel be linearided to 1D range
-     * @param p pointer to generated code
-     */
-    Schedule(const Shape& ws, bool f, code p) : work_size(ws), is_flat(f), ptr(p) {}
+    Schedule(LoweringResult&& lr) : lowering_result(lr) {}
     /**
      * @brief Returns callable instanse of code pointer
      */
     template<typename K> K get_callable() const {
-        return reinterpret_cast<K>(const_cast<unsigned char*>(ptr));
+        return reinterpret_cast<K>(const_cast<unsigned char*>(lowering_result.compiled_snippet->get_code()));
     }
 
-    Shape work_size {};
-    bool is_flat {false};
-    code ptr {nullptr};
+    LoweringResult lowering_result {};
 };
 
 /**
@@ -113,21 +76,42 @@ public:
      */
     virtual ~Generator() = default;
     /**
-     * @brief virtual method any specific implementation should implement
-     * @param m model in canonical for for table-based code generation
-     * @return pointer to generated code
+     * @brief generates executable code
+     * @param linear_ir lowered IR for code generation
+     * @param compile_params compile-time parameters used for code generation
+     * @return variable to handle the result
      */
-    code generate(std::shared_ptr<ov::Model>& m, const void* compile_params = nullptr) const;
+    LoweringResult generate(const lowered::LinearIRPtr& linear_ir, const void* compile_params = nullptr) const;
 
     /**
      * @brief gets target machine
      * @return pointer to constant target machine
      */
-    std::shared_ptr<const TargetMachine> get_target_machine() const { return target; }
+    std::shared_ptr<const TargetMachine> get_target_machine() const;
+
+    /**
+     * @brief gets register type by op type
+     *        TODO: Should be static attribute of emitters
+     * @return register type
+     */
+    virtual RegType get_op_out_reg_type(const ov::Output<ov::Node>& out) const;
+
+    virtual std::shared_ptr<Generator> clone() const = 0;
 
 protected:
+    /**
+    * @brief gets register type by specific plugin op type
+    * @return register type
+    */
+    virtual RegType get_specific_op_out_reg_type(const ov::Output<Node>& out) const;
+    /**
+    * @brief returns true if an emitter can use precompiled kernel.
+    * @return bool
+    */
+    virtual bool uses_precompiled_kernel(const std::shared_ptr<Emitter>& emitter) const { return false; }
+
     std::shared_ptr<TargetMachine> target;
 };
 
 } // namespace snippets
-} // namespace ngraph
+} // namespace ov

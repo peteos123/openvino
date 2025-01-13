@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -7,6 +7,8 @@
 #include <sstream>
 #include <json_object.h>
 #include "openvino/core/enum_names.hpp"
+#include "roi_align_shape_inference.hpp"
+#include "roi_align_rotated_shape_inference.hpp"
 
 namespace cldnn {
 GPU_DEFINE_PRIMITIVE_TYPE_ID(roi_align)
@@ -20,10 +22,46 @@ layout roi_align_inst::calc_output_layout(roi_align_node const& node, kernel_imp
     auto rois_layout = impl_param.get_input_layout(1);
     auto num_rois = rois_layout.batch();
     auto num_channels = input_layout.feature();
-    return layout(input_layout.data_type,
-                  input_layout.format,
-                  {num_rois, num_channels, primitive->pooled_h, primitive->pooled_w});
+    return layout({num_rois, num_channels, primitive->pooled_h, primitive->pooled_w},
+                  input_layout.data_type,
+                  input_layout.format);
 }
+
+template<typename ShapeType>
+std::vector<layout> roi_align_inst::calc_output_layouts(roi_align_node const& node, kernel_impl_params const& impl_param) {
+    auto primitive = impl_param.typed_desc<roi_align>();
+
+    auto input0_layout  = impl_param.get_input_layout(0);
+    auto input1_layout  = impl_param.get_input_layout(1);
+    auto input2_layout  = impl_param.get_input_layout(2);
+
+    std::vector<ShapeType> input_shapes = {
+        input0_layout.get<ShapeType>(),     // input shape
+        input1_layout.get<ShapeType>(),     // roi shape
+        input2_layout.get<ShapeType>()      // batch indices shape
+    };
+
+    std::vector<ShapeType> output_shapes;
+
+#define PERFORM_SHAPE_INFERENCE(ROI_ALIGN_CLASS_NAME) \
+    ROI_ALIGN_CLASS_NAME op;                          \
+    op.set_pooled_h(primitive->pooled_h);             \
+    op.set_pooled_w(primitive->pooled_w);             \
+    output_shapes = shape_infer(&op, input_shapes);
+
+    if (primitive->roi_mode == roi_align::ROIMode::rotated) {
+        PERFORM_SHAPE_INFERENCE(ov::op::v15::ROIAlignRotated);
+    } else {
+        PERFORM_SHAPE_INFERENCE(ov::op::v3::ROIAlign);
+    }
+
+#undef PERFORM_SHAPE_INFERENCE
+
+    return { layout{output_shapes[0], input0_layout.data_type, input0_layout.format} };
+}
+
+template
+std::vector<layout> roi_align_inst::calc_output_layouts<ov::PartialShape>(roi_align_node const& node, const kernel_impl_params& impl_param);
 
 std::string roi_align_inst::to_string(roi_align_node const& node) {
     auto node_info = node.desc_to_json();
@@ -46,6 +84,8 @@ std::string roi_align_inst::to_string(roi_align_node const& node) {
 }  // namespace cldnn
 
 namespace ov {
+using cldnn::roi_align;
+
 template <> EnumNames<roi_align::PoolingMode>& EnumNames<roi_align::PoolingMode>::get() {
   static auto enum_names =
       EnumNames<roi_align::PoolingMode>("PoolingMode", {{"max", roi_align::PoolingMode::max},

@@ -1,7 +1,9 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 #include "openvino/c/ov_prepostprocess.h"
+
+#include <stdarg.h>
 
 #include "common.h"
 
@@ -18,8 +20,15 @@ const std::map<ov_color_format_e, ov::preprocess::ColorFormat> color_format_map 
     {ov_color_format_e::I420_THREE_PLANES, ov::preprocess::ColorFormat::I420_THREE_PLANES},
     {ov_color_format_e::RGB, ov::preprocess::ColorFormat::RGB},
     {ov_color_format_e::BGR, ov::preprocess::ColorFormat::BGR},
+    {ov_color_format_e::GRAY, ov::preprocess::ColorFormat::GRAY},
     {ov_color_format_e::RGBX, ov::preprocess::ColorFormat::RGBX},
     {ov_color_format_e::BGRX, ov::preprocess::ColorFormat::BGRX}};
+
+const std::map<ov_padding_mode_e, ov::preprocess::PaddingMode> padding_mode_map = {
+    {ov_padding_mode_e::CONSTANT, ov::preprocess::PaddingMode::CONSTANT},
+    {ov_padding_mode_e::EDGE, ov::preprocess::PaddingMode::EDGE},
+    {ov_padding_mode_e::REFLECT, ov::preprocess::PaddingMode::REFLECT},
+    {ov_padding_mode_e::SYMMETRIC, ov::preprocess::PaddingMode::SYMMETRIC}};
 
 #define GET_OV_COLOR_FARMAT(a)                                                                   \
     (color_format_map.find(a) == color_format_map.end() ? ov::preprocess::ColorFormat::UNDEFINED \
@@ -164,6 +173,22 @@ ov_status_e ov_preprocess_preprocess_steps_scale(ov_preprocess_preprocess_steps_
     return ov_status_e::OK;
 }
 
+OPENVINO_C_API(ov_status_e)
+ov_preprocess_preprocess_steps_scale_multi_channels(ov_preprocess_preprocess_steps_t* preprocess_input_process_steps,
+                                                    const float* values,
+                                                    const int32_t value_size) {
+    if (!preprocess_input_process_steps || !values || value_size <= 0) {
+        return ov_status_e::INVALID_C_PARAM;
+    }
+    try {
+        std::vector<float> scale_vec(values, values + value_size);
+        preprocess_input_process_steps->object->scale(scale_vec);
+    }
+    CATCH_OV_EXCEPTIONS
+
+    return ov_status_e::OK;
+}
+
 ov_status_e ov_preprocess_preprocess_steps_mean(ov_preprocess_preprocess_steps_t* preprocess_input_process_steps,
                                                 float value) {
     if (!preprocess_input_process_steps) {
@@ -171,6 +196,22 @@ ov_status_e ov_preprocess_preprocess_steps_mean(ov_preprocess_preprocess_steps_t
     }
     try {
         preprocess_input_process_steps->object->mean(value);
+    }
+    CATCH_OV_EXCEPTIONS
+
+    return ov_status_e::OK;
+}
+
+OPENVINO_C_API(ov_status_e)
+ov_preprocess_preprocess_steps_mean_multi_channels(ov_preprocess_preprocess_steps_t* preprocess_input_process_steps,
+                                                   const float* values,
+                                                   const int32_t value_size) {
+    if (!preprocess_input_process_steps || !values || value_size <= 0) {
+        return ov_status_e::INVALID_C_PARAM;
+    }
+    try {
+        std::vector<float> mean_vec(values, values + value_size);
+        preprocess_input_process_steps->object->mean(mean_vec);
     }
     CATCH_OV_EXCEPTIONS
 
@@ -262,18 +303,37 @@ ov_status_e ov_preprocess_input_tensor_info_set_layout(ov_preprocess_input_tenso
     return ov_status_e::OK;
 }
 
-ov_status_e ov_preprocess_input_tensor_info_set_color_format(
+ov_status_e ov_preprocess_input_tensor_info_set_color_format_with_subname(
     ov_preprocess_input_tensor_info_t* preprocess_input_tensor_info,
-    const ov_color_format_e colorFormat) {
+    const ov_color_format_e colorFormat,
+    const size_t sub_names_size,
+    ...) {
     if (!preprocess_input_tensor_info) {
         return ov_status_e::INVALID_C_PARAM;
     }
     try {
-        preprocess_input_tensor_info->object->set_color_format(GET_OV_COLOR_FARMAT(colorFormat));
+        std::vector<std::string> names = {};
+        if (sub_names_size > 0) {
+            va_list args_ptr;
+            va_start(args_ptr, sub_names_size);
+            for (size_t i = 0; i < sub_names_size; i++) {
+                std::string _value = va_arg(args_ptr, char*);
+                names.emplace_back(_value);
+            }
+            va_end(args_ptr);
+        }
+
+        preprocess_input_tensor_info->object->set_color_format(GET_OV_COLOR_FARMAT(colorFormat), names);
     }
     CATCH_OV_EXCEPTIONS
 
     return ov_status_e::OK;
+}
+
+ov_status_e ov_preprocess_input_tensor_info_set_color_format(
+    ov_preprocess_input_tensor_info_t* preprocess_input_tensor_info,
+    const ov_color_format_e colorFormat) {
+    return ov_preprocess_input_tensor_info_set_color_format_with_subname(preprocess_input_tensor_info, colorFormat, 0);
 }
 
 ov_status_e ov_preprocess_input_tensor_info_set_spatial_static_shape(
@@ -285,6 +345,20 @@ ov_status_e ov_preprocess_input_tensor_info_set_spatial_static_shape(
     }
     try {
         preprocess_input_tensor_info->object->set_spatial_static_shape(input_height, input_width);
+    }
+    CATCH_OV_EXCEPTIONS
+
+    return ov_status_e::OK;
+}
+
+ov_status_e ov_preprocess_input_tensor_info_set_memory_type(
+    ov_preprocess_input_tensor_info_t* preprocess_input_tensor_info,
+    const char* mem_type) {
+    if (!preprocess_input_tensor_info || !mem_type) {
+        return ov_status_e::INVALID_C_PARAM;
+    }
+    try {
+        preprocess_input_tensor_info->object->set_memory_type(mem_type);
     }
     CATCH_OV_EXCEPTIONS
 
@@ -451,6 +525,26 @@ ov_status_e ov_preprocess_prepostprocessor_build(const ov_preprocess_prepostproc
         std::unique_ptr<ov_model_t> _model(new ov_model_t);
         _model->object = preprocess->object->build();
         *model = _model.release();
+    }
+    CATCH_OV_EXCEPTIONS
+
+    return ov_status_e::OK;
+}
+
+ov_status_e ov_preprocess_preprocess_steps_pad(const ov_preprocess_preprocess_steps_t* preprocess_input_process_steps,
+                                               const int* const pads_begin,
+                                               size_t pads_begin_size,
+                                               const int* const pads_end,
+                                               size_t pads_end_size,
+                                               float value,
+                                               ov_padding_mode_e mode) {
+    if (!preprocess_input_process_steps) {
+        return ov_status_e::INVALID_C_PARAM;
+    }
+    try {
+        std::vector<int> vec_begin(pads_begin, pads_begin + pads_begin_size);
+        std::vector<int> vec_end(pads_end, pads_end + pads_end_size);
+        preprocess_input_process_steps->object->pad(vec_begin, vec_end, value, padding_mode_map.at(mode));
     }
     CATCH_OV_EXCEPTIONS
 

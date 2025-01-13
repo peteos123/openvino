@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -94,10 +94,10 @@ REGISTER_FACTORY(v0, Unsqueeze);
 REGISTER_FACTORY(v1, Add);
 REGISTER_FACTORY(v1, AvgPool);
 REGISTER_FACTORY(v1, BatchToSpace);
-REGISTER_FACTORY(v1, BinaryConvolution);
+// REGISTER_FACTORY(v1, BinaryConvolution); Supported via BinaryConvolution->Convolution conversion
 REGISTER_FACTORY(v1, Broadcast);
 REGISTER_FACTORY(v1, ConvertLike);
-REGISTER_FACTORY(v1, Convolution);
+// REGISTER_FACTORY(v1, Convolution); Supported via Convolution->internal::Convolution conversion
 REGISTER_FACTORY(v1, ConvolutionBackpropData);
 REGISTER_FACTORY(v1, DeformableConvolution);
 REGISTER_FACTORY(v1, DeformablePSROIPooling);
@@ -108,7 +108,7 @@ REGISTER_FACTORY(v1, Gather);
 REGISTER_FACTORY(v1, GatherTree);
 REGISTER_FACTORY(v1, Greater);
 REGISTER_FACTORY(v1, GreaterEqual);
-REGISTER_FACTORY(v1, GroupConvolution);
+// REGISTER_FACTORY(v1, GroupConvolution);  Supported via GroupConvolution->internal::Convolution conversion
 REGISTER_FACTORY(v1, GroupConvolutionBackpropData);
 REGISTER_FACTORY(v1, Less);
 REGISTER_FACTORY(v1, LessEqual);
@@ -224,6 +224,7 @@ REGISTER_FACTORY(v7, Roll);
 REGISTER_FACTORY(v8, Slice);
 REGISTER_FACTORY(v8, Gather);
 REGISTER_FACTORY(v8, GatherND);
+REGISTER_FACTORY(v8, DetectionOutput);
 REGISTER_FACTORY(v8, DeformableConvolution);
 REGISTER_FACTORY(v8, NV12toRGB);
 REGISTER_FACTORY(v8, NV12toBGR);
@@ -235,6 +236,7 @@ REGISTER_FACTORY(v8, AdaptiveAvgPool);
 REGISTER_FACTORY(v8, AdaptiveMaxPool);
 REGISTER_FACTORY(v8, Softmax);
 REGISTER_FACTORY(v8, PriorBox);
+REGISTER_FACTORY(v8, If);
 
 // ------------------------------ Supported v9 ops ------------------------------ //
 REGISTER_FACTORY(v9, GridSample)
@@ -244,8 +246,56 @@ REGISTER_FACTORY(v9, RDFT);
 REGISTER_FACTORY(v9, IRDFT);
 REGISTER_FACTORY(v9, Eye);
 
+// ------------------------------ Supported v10 ops ----------------------------- //
+REGISTER_FACTORY(v10, IsFinite);
+REGISTER_FACTORY(v10, IsInf);
+REGISTER_FACTORY(v10, IsNaN);
+REGISTER_FACTORY(v10, Unique);
+
+// ------------------------------ Supported v11 ops ----------------------------- //
+REGISTER_FACTORY(v11, Interpolate);
+REGISTER_FACTORY(v11, TopK);
+
+// ------------------------------ Supported v12 ops ----------------------------- //
+REGISTER_FACTORY(v12, GroupNormalization);
+REGISTER_FACTORY(v12, Pad);
+REGISTER_FACTORY(v12, ScatterElementsUpdate);
+
+// ------------------------------ Supported v13 ops ----------------------------- //
+REGISTER_FACTORY(v13, Multinomial);
+REGISTER_FACTORY(v13, ScaledDotProductAttention);
+REGISTER_FACTORY(v13, BitwiseAnd);
+REGISTER_FACTORY(v13, BitwiseOr);
+REGISTER_FACTORY(v13, BitwiseXor);
+REGISTER_FACTORY(v13, FakeConvert);
+
+// ------------------------------ Supported v15 ops ----------------------------- //
+REGISTER_FACTORY(v15, ROIAlignRotated);
+REGISTER_FACTORY(v15, BitwiseRightShift);
+REGISTER_FACTORY(v15, BitwiseLeftShift);
+REGISTER_FACTORY(v15, SearchSorted);
+REGISTER_FACTORY(v15, STFT);
+
 // --------------------------- Supported internal ops --------------------------- //
 REGISTER_FACTORY(internal, NonMaxSuppressionIEInternal);
 REGISTER_FACTORY(internal, GenerateProposalsIEInternal);
 REGISTER_FACTORY(internal, NmsStaticShapeIE8);
 REGISTER_FACTORY(internal, MulticlassNmsIEInternal);
+REGISTER_FACTORY(internal, FullyConnected);
+REGISTER_FACTORY(internal, FullyConnectedCompressed);
+REGISTER_FACTORY(internal, RMS);
+REGISTER_FACTORY(internal, GatherCompressed);
+REGISTER_FACTORY(internal, KVCache);
+REGISTER_FACTORY(internal, KVCacheCompressed);
+REGISTER_FACTORY(internal, ReadValue);
+REGISTER_FACTORY(internal, ReadValues);
+REGISTER_FACTORY(internal, Gemm);
+REGISTER_FACTORY(internal, GLU);
+REGISTER_FACTORY(internal, IndirectGemm);
+REGISTER_FACTORY(internal, Convolution);
+REGISTER_FACTORY(internal, Placeholder);
+REGISTER_FACTORY(internal, SDPA);
+REGISTER_FACTORY(internal, IndirectSDPA);
+REGISTER_FACTORY(internal, RoPE);
+REGISTER_FACTORY(internal, DynamicQuantize);
+REGISTER_FACTORY(internal, PagedAttentionExtension);

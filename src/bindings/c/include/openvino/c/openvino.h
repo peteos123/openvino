@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -15,6 +15,13 @@
  **/
 #pragma once
 
+#ifdef _WINDOWS_
+#    pragma message( \
+        "The BOOLEAN define in ov_element_type_e conflict with Windows.h BOOLEAN define. The BOOLEAN of ov_element_type_e redefine to OV_BOOLEAN here. If you want to use BOOLEAN of Windows.h, pls redefine befor include openvino/c/openvino.h, such as typedef BOOLEAN WIN_BOOLEAN")
+#endif
+#define BOOLEAN OV_BOOLEAN
+
+#include "openvino/c/auto/properties.h"
 #include "openvino/c/ov_common.h"
 #include "openvino/c/ov_compiled_model.h"
 #include "openvino/c/ov_core.h"
@@ -27,5 +34,6 @@
 #include "openvino/c/ov_prepostprocess.h"
 #include "openvino/c/ov_property.h"
 #include "openvino/c/ov_rank.h"
+#include "openvino/c/ov_remote_context.h"
 #include "openvino/c/ov_shape.h"
 #include "openvino/c/ov_tensor.h"

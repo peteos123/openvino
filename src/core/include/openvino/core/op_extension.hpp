@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -46,7 +46,7 @@ public:
     /**
      * @brief Destructor
      */
-    ~BaseOpExtension() override;
+    virtual ~BaseOpExtension() override;
 };
 
 namespace detail {
@@ -60,7 +60,9 @@ namespace detail {
     static auto collect_attached_extensions_##FRAMEWORK(ov::Any)->void {}
 
 OV_COLLECT_ATTACHED_EXTENSIONS(onnx)
+OV_COLLECT_ATTACHED_EXTENSIONS(paddle)
 OV_COLLECT_ATTACHED_EXTENSIONS(tensorflow)
+OV_COLLECT_ATTACHED_EXTENSIONS(pytorch)
 }  // namespace detail
 
 /**
@@ -95,7 +97,9 @@ public:
     std::vector<ov::Extension::Ptr> get_attached_extensions() const override {
         std::vector<ov::Extension::Ptr> res;
         detail::collect_attached_extensions_onnx<T>(res);
+        detail::collect_attached_extensions_paddle<T>(res);
         detail::collect_attached_extensions_tensorflow<T>(res);
+        detail::collect_attached_extensions_pytorch<T>(res);
         return res;
     }
 };

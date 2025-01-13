@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -10,6 +10,7 @@ ParamsKey ArgMaxMinKernelGPURef::GetSupportedKey() const {
     k.EnableInputDataType(Datatype::F16);
     k.EnableInputDataType(Datatype::F32);
     k.EnableInputDataType(Datatype::INT8);
+    k.EnableInputDataType(Datatype::UINT8);
     k.EnableAllOutputDataType();
     k.EnableInputLayout(DataLayout::bfyx);
     k.EnableInputLayout(DataLayout::yxfb);
@@ -18,14 +19,15 @@ ParamsKey ArgMaxMinKernelGPURef::GetSupportedKey() const {
     k.EnableDifferentTypes();
     k.EnableBatching();
     k.EnableTensorPitches();
+    k.EnableDynamicShapesSupport();
     return k;
 }
 
-KernelsData ArgMaxMinKernelGPURef::GetKernelsData(const Params& params, const optional_params& options) const {
-    return GetCommonKernelsData(params, options);
+KernelsData ArgMaxMinKernelGPURef::GetKernelsData(const Params& params) const {
+    return GetCommonKernelsData(params);
 }
 
-KernelsPriority ArgMaxMinKernelGPURef::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority ArgMaxMinKernelGPURef::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_9;
 }
 }  // namespace kernel_selector

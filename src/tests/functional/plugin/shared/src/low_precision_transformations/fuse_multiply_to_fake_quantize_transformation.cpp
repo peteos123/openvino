@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -9,8 +9,8 @@
 #include <string>
 #include <vector>
 
-#include <transformations/init_node_info.hpp>
-#include "lpt_ngraph_functions/fuse_multiply_to_fake_quantize_function.hpp"
+#include "transformations/init_node_info.hpp"
+#include "ov_lpt_models/fuse_multiply_to_fake_quantize.hpp"
 
 namespace LayerTestsDefinitions {
 
@@ -30,16 +30,18 @@ void FuseMultiplyToFakeQuantizeTransformation::SetUp() {
     FuseMultiplyToFakeQuantizeTransformationTestValues testValues;
     std::tie(targetDevice, testValues) = this->GetParam();
 
-    function = ngraph::builder::subgraph::FuseMultiplyToFakeQuantizeFunction::get(
+    init_input_shapes(testValues.inputShape);
+
+    function = ov::builder::subgraph::FuseMultiplyToFakeQuantizeFunction::get(
         testValues.inputShape,
         testValues.actual.fakeQuantizeOnData,
         testValues.actual.dequantization);
 
-    ngraph::pass::InitNodeInfo().run_on_function(function);
+    ov::pass::InitNodeInfo().run_on_model(function);
 }
 
 TEST_P(FuseMultiplyToFakeQuantizeTransformation, CompareWithRefImpl) {
-    Run();
+    run();
 };
 
 }  // namespace LayerTestsDefinitions

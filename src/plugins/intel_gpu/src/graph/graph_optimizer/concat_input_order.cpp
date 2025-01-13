@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -19,12 +19,14 @@ namespace {
 
 using shuffle_range = std::pair<int32_t, int32_t>;
 
-bool can_shuffle_features(program_node& node, stream& stream) {
+bool can_shuffle_features(program_node& node, program_node& concat_node, stream& stream) {
     if (node.is_type<convolution>()) {
         auto& conv_node = node.as<convolution>();
         auto& wei_node = conv_node.weights();
+        if (ov::element::Type(wei_node.get_output_layout().data_type).bitwidth() < 8)
+            return false;
 
-        return conv_node.get_groups() == 1 &&
+        return conv_node.get_groups() == 1 && node.get_dependency_index(concat_node) == 0 &&
             conv_node.get_deformable_groups() == 1 && !conv_node.get_transposed() &&
             !conv_node.activations_zero_points_term() &&
             wei_node.is_type<data>() && wei_node.is_constant() && !wei_node.is_output();
@@ -32,8 +34,10 @@ bool can_shuffle_features(program_node& node, stream& stream) {
     if (node.is_type<fully_connected>()) {
         auto& fc_node = node.as<fully_connected>();
         auto& wei_node = fc_node.weights();
+        if (ov::element::Type(wei_node.get_output_layout().data_type).bitwidth() < 8)
+            return false;
 
-        return wei_node.is_type<data>() && wei_node.is_constant() && !wei_node.is_output();
+        return node.get_dependency_index(concat_node) == 0 && wei_node.is_type<data>() && wei_node.is_constant() && !wei_node.is_output();
     }
 
     bool pass_through = false;
@@ -44,7 +48,7 @@ bool can_shuffle_features(program_node& node, stream& stream) {
     if (pass_through) {
         // Primitives that are feature order invariant, pass-through shuffled features to users
         for (auto& user : node.get_users()) {
-            if (!can_shuffle_features(*user, stream))
+            if (!can_shuffle_features(*user, node, stream))
                 return false;
         }
         return true;
@@ -118,8 +122,7 @@ void concat_input_order::run(program& p) {
         // 4. Not already aligned
         // 5. Users can accept shuffled features
         // 6. No fused primitives
-        if (!node->is_type<concatenation>() || node->is_output() ||
-            (node->is_valid_output_layout() && node->get_output_layout().is_dynamic()))
+        if (!node->is_type<concatenation>() || node->is_output() || node->is_dynamic())
             continue;
 
         auto& concat_node = node->as<concatenation>();
@@ -146,6 +149,7 @@ void concat_input_order::run(program& p) {
             single_format &= dep_layout.format == out_format;
             feature_sizes.push_back(dep_layout.feature());
         }
+
         // Alignment is not optimal if aligned input follows unaligned one
         bool already_aligned = true;
         for (size_t i = 1; i < feature_sizes.size(); ++i) {
@@ -156,7 +160,7 @@ void concat_input_order::run(program& p) {
         // Check that we can fuse shuffling to users
         bool can_shuffle_users = true;
         for (auto user : concat_node.get_users()) {
-            can_shuffle_users &= can_shuffle_features(*user, p.get_stream());
+            can_shuffle_users &= can_shuffle_features(*user, concat_node, p.get_stream());
         }
 
         if (!along_f || !no_fusing || !correct_format || !single_format || already_aligned || !can_shuffle_users)

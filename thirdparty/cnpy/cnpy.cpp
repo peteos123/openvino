@@ -66,8 +66,6 @@ template<> std::vector<char>& cnpy::operator+=(std::vector<char>& lhs, const cha
 
 void cnpy::parse_npy_header(unsigned char* buffer,size_t& word_size, std::vector<size_t>& shape, bool& fortran_order) {
     //std::string magic_string(buffer,6);
-    uint8_t major_version = *reinterpret_cast<uint8_t*>(buffer+6);
-    uint8_t minor_version = *reinterpret_cast<uint8_t*>(buffer+7);
     uint16_t header_len = *reinterpret_cast<uint16_t*>(buffer+8);
     std::string header(reinterpret_cast<char*>(buffer+9),header_len);
 
@@ -139,11 +137,11 @@ void cnpy::parse_npy_header(FILE* fp, size_t& word_size, std::vector<size_t>& sh
         throw std::runtime_error("parse_npy_header: failed to find header keyword: '(' or ')'");
 
     std::regex num_regex("[0-9][0-9]*");
-    std::smatch sm;
+    std::cmatch sm;
     shape.clear();
 
     std::string str_shape = header.substr(loc1+1,loc2-loc1-1);
-    while(std::regex_search(str_shape, sm, num_regex)) {
+    while(std::regex_search(str_shape.c_str(), sm, num_regex)) {
         shape.push_back(std::stoi(sm[0].str()));
         str_shape = sm.suffix().str();
     }
@@ -236,6 +234,7 @@ cnpy::NpyArray load_the_npz_array(FILE* fp, uint32_t compr_bytes, uint32_t uncom
 
     err = inflate(&d_stream, Z_FINISH);
     err = inflateEnd(&d_stream);
+    (void)err;
 
     std::vector<size_t> shape(0);
     size_t word_size = 0;

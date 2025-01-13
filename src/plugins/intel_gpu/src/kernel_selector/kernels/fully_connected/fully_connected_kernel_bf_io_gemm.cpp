@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -26,7 +26,8 @@ ParamsKey FullyConnected_bf_io_GEMM::GetSupportedKey() const {
 }
 
 FullyConnected_bf_io_GEMM::DispatchData FullyConnected_bf_io_GEMM::SetDefault(const fully_connected_params& params,
-                                                                              int autoTuneIndex) const {
+                                                                              int autoTuneIndex,
+                                                                              int /*kernel_number*/) const {
     auto dispatchData = Parent::SetDefault(params, autoTuneIndex);
 
     const uint32_t localWorkSizeX = 64;
@@ -38,7 +39,7 @@ FullyConnected_bf_io_GEMM::DispatchData FullyConnected_bf_io_GEMM::SetDefault(co
     return dispatchData;
 }
 
-KernelsPriority FullyConnected_bf_io_GEMM::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority FullyConnected_bf_io_GEMM::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_6;
 }
 
@@ -65,11 +66,26 @@ JitConstants FullyConnected_bf_io_GEMM::GetJitConstants(const fully_connected_pa
     return jit;
 }
 
-KernelsData FullyConnected_bf_io_GEMM::GetKernelsData(const Params& params, const optional_params& options) const {
+bool FullyConnected_bf_io_GEMM::Validate(const Params& p) const {
+    if (!FullyConnectedKernelBase::Validate(p)) {
+        return false;
+    }
+
+    const auto& params = static_cast<const fully_connected_params&>(p);
+
+    if (!params.bias.empty()) {
+        if (params.inputs[0].GetDType() != params.bias[0].GetDType()) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+KernelsData FullyConnected_bf_io_GEMM::GetKernelsData(const Params& params) const {
     KernelsData res = {};
     for (size_t i = 0; i < autoTuneOptions.size(); i++) {
         KernelsData kd = GetTunedKernelsDataByIndex(params,
-                                                    options,
                                                     DataLayout::bf,
                                                     WeightsLayout::oiyx,
                                                     static_cast<int>(i));

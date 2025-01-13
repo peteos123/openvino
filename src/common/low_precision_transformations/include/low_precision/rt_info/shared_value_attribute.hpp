@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -8,11 +8,9 @@
 #include <unordered_set>
 #include <vector>
 
-#include <ngraph/node.hpp>
-#include <ngraph/variant.hpp>
+#include "openvino/core/node.hpp"
 
-#include <low_precision/lpt_visibility.hpp>
-#include <ngraph/pass/graph_rewrite.hpp>
+#include "low_precision/lpt_visibility.hpp"
 
 template <class T>
 class LP_TRANSFORMATIONS_API SharedAttribute : public ov::RuntimeAttribute {
@@ -20,14 +18,14 @@ public:
     virtual ~SharedAttribute() = default;
 
     /**
-     * @ingroup ie_transformation_common_api
+     * @ingroup ov_transformation_common_api
      * @brief SharedValueAttribute type for shared value attributes.
      * The attribute is used for attribute SharedValue value backward propagation.
      */
     class LP_TRANSFORMATIONS_API SharedValueAttribute : public std::enable_shared_from_this<SharedValueAttribute> {
     public:
         struct LP_TRANSFORMATIONS_API SharedValue : public std::enable_shared_from_this<SharedValue> {
-            SharedValue() = default;
+            SharedValue() {}
             SharedValue(const T& value) : value{value} {}
             T value = {};
             void addAttribute(std::weak_ptr<SharedValueAttribute> attribute) {

@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -7,13 +7,18 @@
 #include <gtest/gtest.h>
 
 #include <memory>
-#include <shared_node_info.hpp>
-#include <test_common.hpp>
 
 #include "common_test_utils/graph_comparator.hpp"
+#include "common_test_utils/test_common.hpp"
 #include "openvino/core/except.hpp"
 #include "openvino/core/partial_shape.hpp"
 #include "openvino/opsets/opset8.hpp"
+#include "shared_node_info.hpp"
+
+using ov::op::util::Variable;
+using ov::op::util::VariableInfo;
+using ov::op::v0::Parameter;
+using ov::op::v0::Result;
 
 TEST(model, get_input_by_tensor_name) {
     auto arg0 = std::make_shared<ov::opset8::Parameter>(ov::element::f32, ov::PartialShape{1});
@@ -533,12 +538,12 @@ TEST(model, multiple_inputs_outputs_model_from_const_model) {
 TEST(model, parameter_result_function) {
     std::shared_ptr<ov::Model> function = nullptr;
     {
-        auto param = std::make_shared<ov::opset8::Parameter>(ov::element::f16, ngraph::Shape({1, 3, 24, 24}));
+        auto param = std::make_shared<ov::opset8::Parameter>(ov::element::f16, ov::Shape({1, 3, 24, 24}));
         param->set_friendly_name("param");
         param->output(0).get_tensor().set_names({"data"});
         auto result = std::make_shared<ov::opset8::Result>(param);
         result->set_friendly_name("result");
-        function = std::make_shared<ngraph::Function>(ngraph::ResultVector{result}, ngraph::ParameterVector{param});
+        function = std::make_shared<ov::Model>(ov::ResultVector{result}, ov::ParameterVector{param});
         function->set_friendly_name("ParamResult");
     }
 
@@ -562,12 +567,12 @@ TEST(model, constant_result_function) {
     std::shared_ptr<ov::Node> constant = nullptr;
 
     {
-        constant = std::make_shared<ov::opset8::Constant>(ov::element::f32, ngraph::Shape({1, 3, 24, 24}));
+        constant = std::make_shared<ov::opset8::Constant>(ov::element::f32, ov::Shape({1, 3, 24, 24}));
         constant->set_friendly_name("constant");
         constant->output(0).get_tensor().set_names({"data"});
         auto result = std::make_shared<ov::opset8::Result>(constant);
         result->set_friendly_name("result");
-        function = std::make_shared<ngraph::Function>(ngraph::ResultVector{result}, ngraph::ParameterVector{});
+        function = std::make_shared<ov::Model>(ov::ResultVector{result}, ov::ParameterVector{});
         function->set_friendly_name("ConstResult");
     }
 
@@ -585,7 +590,7 @@ TEST(model, constant_result_function) {
 }
 
 TEST(model_reshape, ReshapedDynamicShapeLayout) {
-    std::shared_ptr<ov::Model> ngraph;
+    std::shared_ptr<ov::Model> model;
     {
         ov::PartialShape shape({-1, 3, 22, 22});
         ov::element::Type type(ov::element::Type_t::f32);
@@ -594,21 +599,21 @@ TEST(model_reshape, ReshapedDynamicShapeLayout) {
         auto relu = std::make_shared<ov::op::v0::Relu>(param);
 
         ov::ParameterVector params = {param};
-        ngraph = std::make_shared<ov::Model>(relu, params);
+        model = std::make_shared<ov::Model>(relu, params);
     }
 
-    EXPECT_TRUE(ngraph->input().get_partial_shape().is_dynamic());
+    EXPECT_TRUE(model->input().get_partial_shape().is_dynamic());
 
     std::map<std::string, ov::PartialShape> new_shape;
     new_shape["tensor"] = ov::Shape{1, 3, 22, 22};
-    EXPECT_NO_THROW(ngraph->reshape(new_shape));
+    EXPECT_NO_THROW(model->reshape(new_shape));
 
-    EXPECT_FALSE(ngraph->input().get_partial_shape().is_dynamic());
-    EXPECT_FALSE(ngraph->get_parameters().front()->get_partial_shape().is_dynamic());
+    EXPECT_FALSE(model->input().get_partial_shape().is_dynamic());
+    EXPECT_FALSE(model->get_parameters().front()->get_partial_shape().is_dynamic());
 }
 
 TEST(model_reshape, ReshapeBatchReLU) {
-    std::shared_ptr<ov::Model> ngraph;
+    std::shared_ptr<ov::Model> model;
     {
         ov::PartialShape shape({1, 3, 22, 22});
         ov::element::Type type(ov::element::Type_t::f32);
@@ -620,24 +625,24 @@ TEST(model_reshape, ReshapeBatchReLU) {
         ov::ParameterVector params = {param};
         ov::ResultVector results = {result};
 
-        ngraph = std::make_shared<ov::Model>(results, params);
+        model = std::make_shared<ov::Model>(results, params);
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
 
     {
         std::map<std::string, ov::PartialShape> new_shape;
         new_shape["tensor2"] = ov::PartialShape{2, 3, 22, 22};
-        EXPECT_NO_THROW(ngraph->reshape(new_shape));
+        EXPECT_NO_THROW(model->reshape(new_shape));
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
 }
 
 TEST(model_reshape, ReshapeSpatialReLU) {
-    std::shared_ptr<ov::Model> ngraph;
+    std::shared_ptr<ov::Model> model;
     {
         ov::PartialShape shape({1, 3, 22, 22});
         ov::element::Type type(ov::element::Type_t::f32);
@@ -649,24 +654,24 @@ TEST(model_reshape, ReshapeSpatialReLU) {
         ov::ParameterVector params = {param};
         ov::ResultVector results = {result};
 
-        ngraph = std::make_shared<ov::Model>(results, params);
+        model = std::make_shared<ov::Model>(results, params);
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
 
     {
         std::map<std::string, ov::PartialShape> new_shape;
         new_shape["tensor"] = ov::PartialShape{1, 3, 25, 25};
-        EXPECT_NO_THROW(ngraph->reshape(new_shape));
+        EXPECT_NO_THROW(model->reshape(new_shape));
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 25, 25}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({1, 3, 25, 25}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 25, 25}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 3, 25, 25}));
 }
 
 TEST(model_reshape, ReshapeSpatialReLUWithoutReplaceParameter) {
-    std::shared_ptr<ov::Model> ngraph;
+    std::shared_ptr<ov::Model> model;
     {
         ov::PartialShape shape({1, 3, 22, 22});
         ov::element::Type type(ov::element::Type_t::f32);
@@ -677,24 +682,24 @@ TEST(model_reshape, ReshapeSpatialReLUWithoutReplaceParameter) {
         ov::ParameterVector params = {param};
         ov::ResultVector results = {result};
 
-        ngraph = std::make_shared<ov::Model>(results, params);
+        model = std::make_shared<ov::Model>(results, params);
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
 
     {
-        ngraph->get_parameters()[0]->set_partial_shape({1, 3, 25, 25});
-        ngraph->validate_nodes_and_infer_types();
+        model->get_parameters()[0]->set_partial_shape({1, 3, 25, 25});
+        model->validate_nodes_and_infer_types();
     }
 
-    EXPECT_EQ(ngraph->input().get_partial_shape(), ov::Shape({1, 3, 25, 25}));
-    EXPECT_EQ(ngraph->output().get_partial_shape(), ov::Shape({1, 3, 25, 25}));
+    EXPECT_EQ(model->input().get_partial_shape(), ov::Shape({1, 3, 25, 25}));
+    EXPECT_EQ(model->output().get_partial_shape(), ov::Shape({1, 3, 25, 25}));
 }
 
 TEST(model_reshape, ReshapeSpatialReLUStaticToDynamic) {
     const ov::PartialShape refShape{1, 3, ov::Dimension::dynamic(), 25};
-    std::shared_ptr<ov::Model> ngraph;
+    std::shared_ptr<ov::Model> model;
     {
         ov::PartialShape shape({1, 3, 22, 22});
         ov::element::Type type(ov::element::Type_t::f32);
@@ -706,27 +711,27 @@ TEST(model_reshape, ReshapeSpatialReLUStaticToDynamic) {
         ov::ParameterVector params = {param};
         ov::ResultVector results = {result};
 
-        ngraph = std::make_shared<ov::Model>(results, params);
+        model = std::make_shared<ov::Model>(results, params);
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
 
     {
         std::map<std::string, ov::PartialShape> new_shape;
         new_shape["tensor"] = refShape;
-        EXPECT_NO_THROW(ngraph->reshape(new_shape));
+        EXPECT_NO_THROW(model->reshape(new_shape));
     }
 
-    EXPECT_TRUE(ngraph->input(0).get_partial_shape().is_dynamic());
-    EXPECT_TRUE(ngraph->output(0).get_partial_shape().is_dynamic());
-    EXPECT_EQ(ngraph->input(0).get_partial_shape(), refShape);
-    EXPECT_EQ(ngraph->output(0).get_partial_shape(), refShape);
+    EXPECT_TRUE(model->input(0).get_partial_shape().is_dynamic());
+    EXPECT_TRUE(model->output(0).get_partial_shape().is_dynamic());
+    EXPECT_EQ(model->input(0).get_partial_shape(), refShape);
+    EXPECT_EQ(model->output(0).get_partial_shape(), refShape);
 }
 
 TEST(model_reshape, ReshapeSpatialReLUStaticToFullyDynamic) {
     const ov::PartialShape refShape = ov::PartialShape::dynamic();
-    std::shared_ptr<ov::Model> ngraph;
+    std::shared_ptr<ov::Model> model;
     {
         ov::PartialShape shape({1, 3, 22, 22});
         ov::element::Type type(ov::element::Type_t::f32);
@@ -738,27 +743,27 @@ TEST(model_reshape, ReshapeSpatialReLUStaticToFullyDynamic) {
         ov::ParameterVector params = {param};
         ov::ResultVector results = {result};
 
-        ngraph = std::make_shared<ov::Model>(results, params);
+        model = std::make_shared<ov::Model>(results, params);
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
 
     {
         std::map<std::string, ov::PartialShape> new_shape;
         new_shape["tensor"] = refShape;
-        EXPECT_NO_THROW(ngraph->reshape(new_shape));
+        EXPECT_NO_THROW(model->reshape(new_shape));
     }
 
-    EXPECT_TRUE(ngraph->input().get_partial_shape().is_dynamic());
-    EXPECT_TRUE(ngraph->output().get_partial_shape().is_dynamic());
-    EXPECT_EQ(ngraph->input().get_partial_shape(), refShape);
-    EXPECT_EQ(ngraph->output().get_partial_shape(), refShape);
+    EXPECT_TRUE(model->input().get_partial_shape().is_dynamic());
+    EXPECT_TRUE(model->output().get_partial_shape().is_dynamic());
+    EXPECT_EQ(model->input().get_partial_shape(), refShape);
+    EXPECT_EQ(model->output().get_partial_shape(), refShape);
 }
 
 TEST(model_reshape, ReshapeSpatialReLUDynamicToDynamic) {
     const ov::PartialShape refShape{1, 3, ov::Dimension::dynamic(), 25};
-    std::shared_ptr<ov::Model> ngraph;
+    std::shared_ptr<ov::Model> model;
     {
         ov::PartialShape shape({1, 3, 22, ov::Dimension::dynamic()});
         ov::element::Type type(ov::element::Type_t::f32);
@@ -770,22 +775,22 @@ TEST(model_reshape, ReshapeSpatialReLUDynamicToDynamic) {
         ov::ParameterVector params = {param};
         ov::ResultVector results = {result};
 
-        ngraph = std::make_shared<ov::Model>(results, params);
+        model = std::make_shared<ov::Model>(results, params);
     }
 
-    EXPECT_EQ(ngraph->input().get_partial_shape(), ov::PartialShape({1, 3, 22, ov::Dimension::dynamic()}));
-    EXPECT_EQ(ngraph->output().get_partial_shape(), ov::PartialShape({1, 3, 22, ov::Dimension::dynamic()}));
+    EXPECT_EQ(model->input().get_partial_shape(), ov::PartialShape({1, 3, 22, ov::Dimension::dynamic()}));
+    EXPECT_EQ(model->output().get_partial_shape(), ov::PartialShape({1, 3, 22, ov::Dimension::dynamic()}));
 
     {
         std::map<std::string, ov::PartialShape> new_shape;
         new_shape["tensor"] = refShape;
-        EXPECT_NO_THROW(ngraph->reshape(new_shape));
+        EXPECT_NO_THROW(model->reshape(new_shape));
     }
 
-    EXPECT_TRUE(ngraph->input().get_partial_shape().is_dynamic());
-    EXPECT_TRUE(ngraph->output().get_partial_shape().is_dynamic());
-    EXPECT_EQ(ngraph->input().get_partial_shape(), refShape);
-    EXPECT_EQ(ngraph->output().get_partial_shape(), refShape);
+    EXPECT_TRUE(model->input().get_partial_shape().is_dynamic());
+    EXPECT_TRUE(model->output().get_partial_shape().is_dynamic());
+    EXPECT_EQ(model->input().get_partial_shape(), refShape);
+    EXPECT_EQ(model->output().get_partial_shape(), refShape);
 }
 
 TEST(model_reshape, TestInvalidReshape) {
@@ -840,7 +845,7 @@ TEST(model_reshape, TestReshapeWithInvalidShapesForTheSameTensor) {
 }
 
 TEST(model_reshape, ReshapeBatchReLUByIndex) {
-    std::shared_ptr<ov::Model> ngraph;
+    std::shared_ptr<ov::Model> model;
     ov::Output<ov::Node> port;
     {
         ov::PartialShape shape({1, 3, 22, 22});
@@ -854,24 +859,24 @@ TEST(model_reshape, ReshapeBatchReLUByIndex) {
         ov::ParameterVector params = {param};
         ov::ResultVector results = {result};
 
-        ngraph = std::make_shared<ov::Model>(results, params);
+        model = std::make_shared<ov::Model>(results, params);
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
 
     {
         std::map<size_t, ov::PartialShape> new_shape;
         new_shape[0] = ov::PartialShape{2, 3, 22, 22};
-        EXPECT_NO_THROW(ngraph->reshape(new_shape));
+        EXPECT_NO_THROW(model->reshape(new_shape));
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
 }
 
 TEST(model_reshape, ReshapeBatchReLUByPort) {
-    std::shared_ptr<ov::Model> ngraph;
+    std::shared_ptr<ov::Model> model;
     ov::Output<ov::Node> port;
     {
         ov::PartialShape shape({1, 3, 22, 22});
@@ -885,24 +890,24 @@ TEST(model_reshape, ReshapeBatchReLUByPort) {
         ov::ParameterVector params = {param};
         ov::ResultVector results = {result};
 
-        ngraph = std::make_shared<ov::Model>(results, params);
+        model = std::make_shared<ov::Model>(results, params);
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
 
     {
         std::map<ov::Output<ov::Node>, ov::PartialShape> new_shape;
         new_shape[port] = ov::PartialShape{2, 3, 22, 22};
-        EXPECT_NO_THROW(ngraph->reshape(new_shape));
+        EXPECT_NO_THROW(model->reshape(new_shape));
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
 }
 
 TEST(model_reshape, ReshapeBatchReLUWithOneInput) {
-    std::shared_ptr<ov::Model> ngraph;
+    std::shared_ptr<ov::Model> model;
     ov::Output<ov::Node> port;
     {
         ov::PartialShape shape({1, 3, 22, 22});
@@ -916,23 +921,23 @@ TEST(model_reshape, ReshapeBatchReLUWithOneInput) {
         ov::ParameterVector params = {param};
         ov::ResultVector results = {result};
 
-        ngraph = std::make_shared<ov::Model>(results, params);
+        model = std::make_shared<ov::Model>(results, params);
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 3, 22, 22}));
 
     {
         ov::PartialShape new_shape;
         new_shape = ov::PartialShape{2, 3, 22, 22};
-        EXPECT_NO_THROW(ngraph->reshape(new_shape));
+        EXPECT_NO_THROW(model->reshape(new_shape));
     }
 
-    EXPECT_EQ(ngraph->get_parameters()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
-    EXPECT_EQ(ngraph->get_results()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({2, 3, 22, 22}));
 }
 
-TEST(model_reshape, IncoreectReshapeBatchWithMultipleInputs) {
+TEST(model_reshape, IncorrectReshapeBatchWithMultipleInputs) {
     auto arg0 = std::make_shared<ov::opset8::Parameter>(ov::element::f32, ov::PartialShape{1, 3, 3, 3});
     arg0->set_friendly_name("data");
     arg0->get_output_tensor(0).set_names({"input1"});
@@ -955,6 +960,161 @@ TEST(model_reshape, IncoreectReshapeBatchWithMultipleInputs) {
     f->validate_nodes_and_infer_types();
     ov::PartialShape shape({1, 3, 22, 22});
     EXPECT_THROW(f->reshape(shape), ov::Exception);
+}
+
+TEST(model_reshape, ReshapeWithStaticVariableSingleInput) {
+    auto arg0 = std::make_shared<Parameter>(ov::element::f32, ov::PartialShape{1, 3, 4, 5});
+
+    auto variable = std::make_shared<Variable>(VariableInfo{arg0->get_output_partial_shape(0), ov::element::f32, "ID"});
+    auto read_value = std::make_shared<ov::op::v6::ReadValue>(arg0, variable);
+    auto assign = std::make_shared<ov::op::v6::Assign>(read_value, variable);
+
+    auto result1 = std::make_shared<Result>(assign);
+
+    auto shape_of = std::make_shared<ov::opset8::ShapeOf>(arg0);
+    auto result2 = std::make_shared<Result>(shape_of);
+    auto model = std::make_shared<ov::Model>(ov::ResultVector{result1, result2}, ov::ParameterVector{arg0});
+
+    model->validate_nodes_and_infer_types();
+
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 4, 5}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 3, 4, 5}));
+    EXPECT_EQ(model->get_results()[1]->get_shape(), ov::Shape({4}));
+
+    {
+        ov::PartialShape shape({1, 4, 3, 3});
+        model->reshape(shape, {{"ID", shape}});
+    }
+
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 4, 3, 3}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 4, 3, 3}));
+    EXPECT_EQ(model->get_results()[1]->get_shape(), ov::Shape({4}));
+}
+
+TEST(model_reshape, ReshapeWithStaticVariablesSingleInput) {
+    auto arg0 = std::make_shared<Parameter>(ov::element::f32, ov::PartialShape{1, 3, 4, 5});
+
+    auto variable =
+        std::make_shared<Variable>(VariableInfo{arg0->get_output_partial_shape(0), ov::element::f32, "ID1"});
+    auto read_value = std::make_shared<ov::op::v6::ReadValue>(arg0, variable);
+    auto assign = std::make_shared<ov::op::v6::Assign>(read_value, variable);
+
+    auto add = std::make_shared<ov::op::v1::Add>(read_value, read_value);
+    auto var_add = std::make_shared<Variable>(VariableInfo{add->get_output_partial_shape(0), ov::element::f32, "ID2"});
+    auto read_value_add = std::make_shared<ov::op::v6::ReadValue>(add, var_add);
+    auto assign_add = std::make_shared<ov::op::v6::Assign>(read_value_add, var_add);
+
+    auto result1 = std::make_shared<Result>(assign);
+
+    auto shape_of = std::make_shared<ov::opset8::ShapeOf>(add);
+    auto result2 = std::make_shared<Result>(shape_of);
+    auto model = std::make_shared<ov::Model>(ov::ResultVector{result1, result2}, ov::ParameterVector{arg0});
+
+    model->validate_nodes_and_infer_types();
+
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 4, 5}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 3, 4, 5}));
+    EXPECT_EQ(model->get_results()[1]->get_shape(), ov::Shape({4}));
+
+    {
+        ov::PartialShape shape({1, 4, 3, 3});
+        model->reshape(shape, {{"ID2", shape}, {"ID1", shape}});
+    }
+
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 4, 3, 3}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 4, 3, 3}));
+    EXPECT_EQ(model->get_results()[1]->get_shape(), ov::Shape({4}));
+}
+
+TEST(model_reshape, ReshapeWithDynamicVariableSingleInput) {
+    auto arg0 = std::make_shared<Parameter>(ov::element::f32, ov::PartialShape{1, 3, 4, 5});
+    arg0->get_output_tensor(0).set_names({"input"});
+
+    auto variable = std::make_shared<Variable>(VariableInfo{ov::PartialShape::dynamic(4), ov::element::f32, "ID"});
+    auto read_value = std::make_shared<ov::op::v6::ReadValue>(arg0, variable);
+    auto assign = std::make_shared<ov::op::v6::Assign>(read_value, variable);
+
+    auto result1 = std::make_shared<Result>(assign);
+
+    auto shape_of = std::make_shared<ov::opset8::ShapeOf>(arg0);
+    auto result2 = std::make_shared<Result>(shape_of);
+    auto model = std::make_shared<ov::Model>(ov::ResultVector{result1, result2}, ov::ParameterVector{arg0});
+
+    model->validate_nodes_and_infer_types();
+
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 4, 5}));
+    EXPECT_EQ(model->get_results()[0]->get_output_partial_shape(0), ov::PartialShape::dynamic(4));
+    EXPECT_EQ(model->get_results()[1]->get_output_partial_shape(0), ov::Shape({4}));
+
+    model->reshape({{"input", ov::PartialShape{1, 4, 8, 9}}});
+
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 4, 8, 9}));
+    EXPECT_EQ(model->get_results()[0]->get_output_partial_shape(0), ov::PartialShape::dynamic(4));
+    EXPECT_EQ(model->get_results()[1]->get_shape(), ov::Shape({4}));
+}
+
+TEST(model_reshape, ReshapeStaticWithVariableMultipleInputs) {
+    auto arg0 = std::make_shared<Parameter>(ov::element::f32, ov::PartialShape{1, 3, 4, 5});
+    auto arg1 = std::make_shared<Parameter>(ov::element::f32, ov::PartialShape{1, 2, 4, 5});
+    auto concat = std::make_shared<ov::op::v0::Concat>(ov::NodeVector{arg0, arg1}, 1);
+
+    auto variable =
+        std::make_shared<Variable>(VariableInfo{concat->get_output_partial_shape(0), ov::element::f32, "ID"});
+    auto read_value = std::make_shared<ov::op::v6::ReadValue>(concat, variable);
+    auto assign = std::make_shared<ov::op::v6::Assign>(read_value, variable);
+
+    auto result1 = std::make_shared<Result>(assign);
+
+    auto shape_of = std::make_shared<ov::opset8::ShapeOf>(concat);
+    auto result2 = std::make_shared<Result>(shape_of);
+    auto model = std::make_shared<ov::Model>(ov::ResultVector{result1, result2}, ov::ParameterVector{arg0, arg1});
+
+    model->validate_nodes_and_infer_types();
+
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 4, 5}));
+    EXPECT_EQ(model->get_parameters()[1]->get_shape(), ov::Shape({1, 2, 4, 5}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 5, 4, 5}));
+    EXPECT_EQ(model->get_results()[1]->get_shape(), ov::Shape({4}));
+
+    {
+        ov::PartialShape shape({1, 14, 4, 5});
+        model->reshape({{0, shape}, {1, shape}}, {{"ID", {1, 28, 4, 5}}});
+    }
+
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 14, 4, 5}));
+    EXPECT_EQ(model->get_parameters()[1]->get_shape(), ov::Shape({1, 14, 4, 5}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 28, 4, 5}));
+    EXPECT_EQ(model->get_results()[1]->get_shape(), ov::Shape({4}));
+}
+
+TEST(model_reshape, ReshapeWithStaticVariableIncorrectVariable) {
+    auto arg0 = std::make_shared<Parameter>(ov::element::f32, ov::PartialShape{1, 3, 4, 5});
+    auto arg1 = std::make_shared<Parameter>(ov::element::f32, ov::PartialShape{1, 2, 4, 5});
+    auto concat = std::make_shared<ov::op::v0::Concat>(ov::NodeVector{arg0, arg1}, 1);
+
+    auto variable =
+        std::make_shared<Variable>(VariableInfo{concat->get_output_partial_shape(0), ov::element::f32, "ID"});
+    auto read_value = std::make_shared<ov::op::v6::ReadValue>(concat, variable);
+    auto assign = std::make_shared<ov::op::v6::Assign>(read_value, variable);
+
+    auto result1 = std::make_shared<Result>(assign);
+
+    auto shape_of = std::make_shared<ov::opset8::ShapeOf>(concat);
+    auto result2 = std::make_shared<Result>(shape_of);
+    auto model = std::make_shared<ov::Model>(ov::ResultVector{result1, result2}, ov::ParameterVector{arg0, arg1});
+
+    model->validate_nodes_and_infer_types();
+
+    EXPECT_EQ(model->get_parameters()[0]->get_shape(), ov::Shape({1, 3, 4, 5}));
+    EXPECT_EQ(model->get_parameters()[1]->get_shape(), ov::Shape({1, 2, 4, 5}));
+    EXPECT_EQ(model->get_results()[0]->get_shape(), ov::Shape({1, 5, 4, 5}));
+    EXPECT_EQ(model->get_results()[1]->get_shape(), ov::Shape({4}));
+
+    ov::PartialShape shape({1, 14, 4, 5});
+    ov::PartialShape wrong_var_shape({1, 20, 4, 5});
+    EXPECT_THROW(model->reshape({{0, shape}, {1, shape}}), ov::AssertFailure);
+    EXPECT_THROW(model->reshape({{0, shape}, {1, shape}}, {{"WRONG_ID", {1, 28, 4, 5}}}), ov::AssertFailure);
+    EXPECT_THROW(model->reshape({{0, shape}, {1, shape}}, {{"ID", wrong_var_shape}}), ov::AssertFailure);
 }
 
 TEST(model, add_output_tensor_name) {
@@ -1032,6 +1192,31 @@ TEST(model, add_output_port) {
     EXPECT_EQ(out.get_node(), f->get_results()[1].get());
     EXPECT_EQ(f->get_results().size(), 2);
     EXPECT_EQ(f->get_results()[1]->input_value(0).get_node(), relu1.get());
+}
+
+TEST(model, add_output_to_new_subgraph) {
+    auto arg0 = std::make_shared<ov::opset8::Parameter>(ov::element::f32, ov::PartialShape{1});
+    arg0->set_friendly_name("data");
+    arg0->get_output_tensor(0).set_names({"input"});
+
+    auto relu1 = std::make_shared<ov::opset8::Relu>(arg0);
+    relu1->set_friendly_name("relu1");
+    relu1->get_output_tensor(0).set_names({"relu_t1"});
+
+    auto relu2 = std::make_shared<ov::opset8::Relu>(relu1);
+    relu2->set_friendly_name("relu2");
+    relu2->get_output_tensor(0).set_names({"relu_t2"});
+    auto f = std::make_shared<ov::Model>(relu2, ov::ParameterVector{arg0});
+    f->validate_nodes_and_infer_types();
+
+    EXPECT_EQ(f->get_results().size(), 1);
+
+    ov::Output<ov::Node> out;
+    EXPECT_NO_THROW(
+        out = f->add_output(ov::opset8::Constant::create(ov::element::i32, {1}, std::vector<int32_t>{1})->output(0)));
+    EXPECT_NO_THROW(f->get_ordered_ops());
+    EXPECT_EQ(out.get_node(), f->get_results()[1].get());
+    EXPECT_EQ(f->get_results().size(), 2);
 }
 
 TEST(model, add_output_incorrect_tensor_name) {
@@ -1122,6 +1307,8 @@ TEST(model, add_output_port_to_result) {
 }
 
 TEST(model, add_output_performance) {
+    // skip this test due to CVS-140440
+    GTEST_SKIP() << "CVS-140440";
     using namespace std::chrono;
     auto test = [](int cnt, bool& timeout) -> size_t {
         auto shape = ov::Shape{1, 1, 224, 224};
@@ -1333,6 +1520,63 @@ bool all_ops_have_same_info(const std::shared_ptr<ov::Model>& f) {
     return true;
 }
 }  // namespace
+
+TEST(model, topological_sort_throws_if_loop_with_one_node) {
+    auto arg0 = std::make_shared<ov::opset8::Parameter>(ov::element::f32, ov::PartialShape{1});
+    auto relu1 = std::make_shared<ov::opset8::Relu>(arg0);
+
+    // Loop relu1->relu1
+    relu1->input(0).replace_source_output(relu1->output(0));
+
+    auto result = std::make_shared<ov::opset8::Result>(relu1);
+    ASSERT_THROW(std::ignore = std::make_shared<ov::Model>(ov::ResultVector{result}, ov::ParameterVector{arg0}),
+                 ov::Exception);
+}
+
+TEST(model, topological_sort_throws_if_loop_with_several_nodes) {
+    auto arg0 = std::make_shared<ov::opset8::Parameter>(ov::element::f32, ov::PartialShape{1});
+    auto relu1 = std::make_shared<ov::opset8::Relu>(arg0);
+    auto result = std::make_shared<ov::opset8::Result>(relu1);
+
+    // Loop relu2->relu3->relu2
+    auto relu2 = std::make_shared<ov::opset8::Relu>(relu1->output(0));
+    auto relu3 = std::make_shared<ov::opset8::Relu>(relu2);
+    ov::replace_node(relu1, relu3);
+
+    ASSERT_THROW(std::ignore = std::make_shared<ov::Model>(ov::ResultVector{result}, ov::ParameterVector{arg0}),
+                 ov::Exception);
+}
+
+TEST(model, topological_sort_throws_if_loop_with_control_dependency) {
+    auto arg0 = std::make_shared<ov::opset8::Parameter>(ov::element::f32, ov::PartialShape{1});
+    auto relu1 = std::make_shared<ov::opset8::Relu>(arg0);
+    auto relu2 = std::make_shared<ov::opset8::Relu>(relu1);
+    auto result = std::make_shared<ov::opset8::Result>(relu2);
+
+    // Loop relu1->relu2->relu1
+    relu1->add_control_dependency(relu2);
+
+    ASSERT_THROW(std::ignore = std::make_shared<ov::Model>(ov::ResultVector{result}, ov::ParameterVector{arg0}),
+                 ov::Exception);
+}
+
+TEST(model, topological_sort_throws_if_loop_with_control_dependency_only) {
+    auto arg0 = std::make_shared<ov::opset8::Parameter>(ov::element::f32, ov::PartialShape{1});
+    auto relu0 = std::make_shared<ov::opset8::Relu>(arg0);
+    auto result0 = std::make_shared<ov::opset8::Result>(relu0);
+
+    auto arg1 = std::make_shared<ov::opset8::Parameter>(ov::element::f32, ov::PartialShape{1});
+    auto relu1 = std::make_shared<ov::opset8::Relu>(arg1);
+    auto result1 = std::make_shared<ov::opset8::Result>(relu1);
+
+    // Loop relu0->relu1->relu0
+    relu0->add_control_dependency(relu1);
+    relu1->add_control_dependency(relu0);
+
+    ASSERT_THROW(
+        std::ignore = std::make_shared<ov::Model>(ov::ResultVector{result0, result1}, ov::ParameterVector{arg0, arg1}),
+        ov::Exception);
+}
 
 TEST(model, topological_sort_caching_basic) {
     auto arg0 = std::make_shared<ov::opset8::Parameter>(ov::element::f32, ov::PartialShape{1});
@@ -1892,7 +2136,7 @@ TEST(model, clone_model_function) {
     auto input1 = model->input(0);
     auto input2 = model->input("data1");
 
-    auto cloned_model = ov::clone_model(*model);
+    auto cloned_model = model->clone();
 
     const auto fc = FunctionsComparator::with_default()
                         .enable(FunctionsComparator::ATTRIBUTES)
@@ -2039,4 +2283,17 @@ TEST(model, set_complex_meta_information) {
     f->set_rt_info(std::vector<float>{22.3f, 33.11f, 44.f}, "config", "model_parameters", "mean_values");
 
     check_rt_info(f);
+}
+
+TEST(model, create_model) {
+    EXPECT_NO_THROW(ov::Model({}, ""));
+    EXPECT_THROW(ov::Model(ov::ResultVector{nullptr}, {}, ""), ov::Exception);
+    EXPECT_THROW(ov::Model(nullptr, {}, ""), ov::Exception);
+    EXPECT_NO_THROW(ov::Model(ov::ResultVector{}, ov::ParameterVector{}, ""));
+    EXPECT_THROW(ov::Model({nullptr}, {nullptr}, {nullptr}, {nullptr}, ""), ov::Exception);
+    EXPECT_THROW(ov::Model({nullptr}, {}, {}, {}, ""), ov::Exception);
+    EXPECT_THROW(ov::Model(ov::ResultVector{}, {nullptr}, {}, {}, ""), ov::Exception);
+    EXPECT_THROW(ov::Model(ov::ResultVector{}, {}, {nullptr}, {}, ""), ov::Exception);
+    EXPECT_THROW(ov::Model(ov::ResultVector{}, {}, {}, {nullptr}, ""), ov::Exception);
+    EXPECT_THROW(ov::Model(ov::OutputVector{ov::Output<ov::Node>{nullptr, 0}}, {}, {}, {}, ""), ov::Exception);
 }

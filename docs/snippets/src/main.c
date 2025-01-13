@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -30,14 +30,26 @@ ov_compiled_model_t* compiled_model = NULL;
 ov_core_compile_model_from_file(core, "model.pdmodel", "AUTO", 0, &compiled_model);
 //! [part2_3]
 }
-
+{
 //! [part2_4]
+ov_compiled_model_t* compiled_model = NULL;
+ov_core_compile_model_from_file(core, "model.pb", "AUTO", 0, &compiled_model);
+//! [part2_4]
+}
+{
+//! [part2_5]
+ov_compiled_model_t* compiled_model = NULL;
+ov_core_compile_model_from_file(core, "model.tflite", "AUTO", 0, &compiled_model);
+//! [part2_5]
+}
+
+//! [part2_6]
 // Construct a model
 ov_model_t* model = NULL;
 ov_core_read_model(core, "model.xml", NULL, &model);
 ov_compiled_model_t* compiled_model = NULL;
 ov_core_compile_model(core, model, "AUTO", 0, &compiled_model);
-//! [part2_4]
+//! [part2_6]
 
 
 //! [part3]
@@ -49,7 +61,7 @@ void * memory_ptr = NULL;
 //! [part4]
 // Get input port for model with one input
 ov_output_const_port_t* input_port = NULL;
-ov_model_const_input(model, &input_port);
+ov_compiled_model_input(compiled_model, &input_port);
 // Get the input shape from input port
 ov_shape_t input_shape;
 ov_const_port_get_shape(input_port, &input_shape);
@@ -94,7 +106,7 @@ project/
    └── src/            - source folder
        └── main.c
 build/                  - build directory
-   ...      
+   ...
 
 //! [part7]
 */

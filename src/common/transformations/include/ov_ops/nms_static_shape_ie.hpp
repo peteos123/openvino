@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -7,10 +7,10 @@
 #include <algorithm>
 #include <memory>
 #include <string>
-#include <transformations_visibility.hpp>
 #include <vector>
 
 #include "openvino/op/op.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 namespace op {
@@ -29,14 +29,9 @@ namespace internal {
 template <typename BaseNmsOp>
 class NmsStaticShapeIE : public BaseNmsOp {
 public:
-    OPENVINO_SUPPRESS_DEPRECATED_START
     // TODO: it should be std::string("NmsStaticShapeIE_") + BaseNmsOp::get_type_info_static().name,
     //       but currently it does not pass conversion to Legacy Opset correctly
-    OPENVINO_RTTI(BaseNmsOp::get_type_info_static().name,
-                  "ie_internal_opset",
-                  BaseNmsOp,
-                  BaseNmsOp::get_type_info_static().version);
-    OPENVINO_SUPPRESS_DEPRECATED_END
+    OPENVINO_RTTI(BaseNmsOp::get_type_info_static().name, "ie_internal_opset", BaseNmsOp);
 
     NmsStaticShapeIE() = default;
 
@@ -116,11 +111,3 @@ void NmsStaticShapeIE<BaseNmsOp>::validate_and_infer_types() {
 }  // namespace internal
 }  // namespace op
 }  // namespace ov
-
-namespace ngraph {
-namespace op {
-namespace internal {
-using ov::op::internal::NmsStaticShapeIE;
-}  // namespace internal
-}  // namespace op
-}  // namespace ngraph

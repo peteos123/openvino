@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -50,7 +50,11 @@ void ocl_event::set_ocl_callback() {
 
 void ocl_event::wait_impl() {
     if (_event.get() != nullptr) {
-        _event.wait();
+        try {
+            _event.wait();
+        } catch (cl::Error const& err) {
+            OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
+        }
     }
 }
 
@@ -59,8 +63,12 @@ void ocl_event::set_impl() {
 }
 
 bool ocl_event::is_set_impl() {
-    if (_event.get() != nullptr) {
-        return _event.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>() == CL_COMPLETE;
+    try {
+        if (_event.get() != nullptr) {
+            return _event.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>() == CL_COMPLETE;
+        }
+    } catch (cl::Error const& err) {
+        OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
     }
     return true;
 }
@@ -77,6 +85,16 @@ static const std::vector<profiling_period_ocl_start_stop> profiling_periods{
 };
 
 bool ocl_event::get_profiling_info_impl(std::list<instrumentation::profiling_interval>& info) {
+    if (duration_nsec.has_value()) {
+        auto stage = instrumentation::profiling_stage::executing;
+        auto duration = std::chrono::nanoseconds(duration_nsec.value());
+        auto period = std::make_shared<instrumentation::profiling_period_basic>(duration);
+
+        info.push_back({ stage, period });
+
+        return true;
+    }
+
     if (!is_event_profiled(_event))
         return true;
 
@@ -84,8 +102,12 @@ bool ocl_event::get_profiling_info_impl(std::list<instrumentation::profiling_int
         cl_ulong start;
         cl_ulong end;
 
-        _event.getProfilingInfo(period.start, &start);
-        _event.getProfilingInfo(period.stop, &end);
+        try {
+            _event.getProfilingInfo(period.start, &start);
+            _event.getProfilingInfo(period.stop, &end);
+        } catch (cl::Error const& err) {
+            OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
+        }
 
         info.push_back(get_profiling_interval(period.stage, start, end));
     }
@@ -95,7 +117,11 @@ bool ocl_event::get_profiling_info_impl(std::list<instrumentation::profiling_int
 
 void ocl_events::wait_impl() {
     if (_last_ocl_event.get() != nullptr) {
-        _last_ocl_event.wait();
+        try {
+            _last_ocl_event.wait();
+        } catch (cl::Error const& err) {
+            OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
+        }
     }
 }
 
@@ -104,8 +130,12 @@ void ocl_events::set_impl() {
 }
 
 bool ocl_events::is_set_impl() {
-    if (_last_ocl_event.get() != nullptr) {
-        return _last_ocl_event.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>() == CL_COMPLETE;
+    try {
+        if (_last_ocl_event.get() != nullptr) {
+            return _last_ocl_event.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>() == CL_COMPLETE;
+        }
+    } catch (cl::Error const& err) {
+        OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
     }
     return true;
 }
@@ -117,15 +147,27 @@ bool ocl_events::get_profiling_info_impl(std::list<instrumentation::profiling_in
     std::map<instrumentation::profiling_stage, std::vector<std::pair<unsigned long long, unsigned long long>>> all_durations;
 
     for (size_t i = 0; i < _events.size(); i++) {
-        auto be = downcast<ocl_event>(_events[i].get());
+        ocl_event *be = nullptr;
+
+        try {
+            be = downcast<ocl_event>(_events[i].get());
+        } catch (const ov::Exception &err) {
+            GPU_DEBUG_LOG << "WARNING: failed to downcast event to ocl_event - " << err.what() << std::endl;
+            continue;
+        }
+
         if (!is_event_profiled(be->_event))
             continue;
 
         for (auto& period : profiling_periods) {
             cl_ulong ev_start;
             cl_ulong ev_end;
-            be->_event.getProfilingInfo(period.start, &ev_start);
-            be->_event.getProfilingInfo(period.stop, &ev_end);
+            try {
+                be->_event.getProfilingInfo(period.start, &ev_start);
+                be->_event.getProfilingInfo(period.stop, &ev_end);
+            } catch (cl::Error const& err) {
+                OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
+            }
             auto ev_duration = std::make_pair(static_cast<unsigned long long>(ev_start),
                                               static_cast<unsigned long long>(ev_end));
 

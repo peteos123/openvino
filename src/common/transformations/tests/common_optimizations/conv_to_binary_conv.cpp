@@ -1,27 +1,28 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
+
+#include "transformations/common_optimizations/conv_to_binary_conv.hpp"
 
 #include <gtest/gtest.h>
 
 #include <memory>
-#include <ngraph/function.hpp>
-#include <ngraph/opsets/opset5.hpp>
-#include <ngraph/pass/constant_folding.hpp>
-#include <ngraph/pass/manager.hpp>
 #include <queue>
 #include <string>
-#include <transformations/common_optimizations/conv_to_binary_conv.hpp>
-#include <transformations/init_node_info.hpp>
-#include <transformations/utils/utils.hpp>
 
-#include "common_test_utils/ngraph_test_utils.hpp"
+#include "common_test_utils/ov_test_utils.hpp"
+#include "openvino/core/model.hpp"
+#include "openvino/opsets/opset5.hpp"
+#include "openvino/pass/constant_folding.hpp"
+#include "openvino/pass/manager.hpp"
+#include "transformations/init_node_info.hpp"
+#include "transformations/utils/utils.hpp"
 
 using namespace testing;
-using namespace ngraph;
+using namespace ov;
 
 TEST(TransformationTests, ConvToBinaryConvOutputLowZeroOutputHighOne) {
-    std::shared_ptr<Function> f(nullptr), f_ref(nullptr);
+    std::shared_ptr<Model> f(nullptr), f_ref(nullptr);
     {
         auto data = std::make_shared<opset5::Parameter>(element::f32, Shape{1, 3, 2, 2});
         auto act_in_low = opset5::Constant::create(element::f32, Shape{1}, {1.0f});
@@ -39,14 +40,14 @@ TEST(TransformationTests, ConvToBinaryConvOutputLowZeroOutputHighOne) {
                                                           Strides{1, 1},
                                                           op::PadType::EXPLICIT);
 
-        f = std::make_shared<Function>(NodeVector{conv}, ParameterVector{data});
+        f = std::make_shared<Model>(NodeVector{conv}, ParameterVector{data});
 
         pass::Manager m;
-        m.register_pass<pass::InitNodeInfo>();
-        m.register_pass<pass::ConvToBinaryConv>();
-        m.register_pass<pass::ConstantFolding>();
+        m.register_pass<ov::pass::InitNodeInfo>();
+        m.register_pass<ov::pass::ConvToBinaryConv>();
+        m.register_pass<ov::pass::ConstantFolding>();
         m.run_passes(f);
-        ASSERT_NO_THROW(check_rt_info(f));
+        OV_ASSERT_NO_THROW(check_rt_info(f));
     }
 
     {
@@ -72,7 +73,7 @@ TEST(TransformationTests, ConvToBinaryConvOutputLowZeroOutputHighOne) {
         auto add = std::make_shared<opset5::Add>(conv, opset5::Constant::create(element::f32, Shape{1, 1, 1}, {0.7f}));
         auto mul = std::make_shared<opset5::Multiply>(add, opset5::Constant::create(element::f32, Shape{}, {0.2f}));
 
-        f_ref = std::make_shared<Function>(NodeVector{mul}, ParameterVector{data});
+        f_ref = std::make_shared<Model>(NodeVector{mul}, ParameterVector{data});
     }
 
     auto res = compare_functions(f, f_ref);
@@ -80,7 +81,7 @@ TEST(TransformationTests, ConvToBinaryConvOutputLowZeroOutputHighOne) {
 }
 
 TEST(TransformationTests, ConvToBinaryConvOutputLowMinusOneOutputHighOne) {
-    std::shared_ptr<Function> f(nullptr), f_ref(nullptr);
+    std::shared_ptr<Model> f(nullptr), f_ref(nullptr);
     {
         auto data = std::make_shared<opset5::Parameter>(element::f32, Shape{1, 3, 2, 2});
         auto act_in_low = opset5::Constant::create(element::f32, Shape{1}, {1.0f});
@@ -98,14 +99,14 @@ TEST(TransformationTests, ConvToBinaryConvOutputLowMinusOneOutputHighOne) {
                                                           Strides{1, 1},
                                                           op::PadType::EXPLICIT);
 
-        f = std::make_shared<Function>(NodeVector{conv}, ParameterVector{data});
+        f = std::make_shared<Model>(NodeVector{conv}, ParameterVector{data});
 
         pass::Manager m;
-        m.register_pass<pass::InitNodeInfo>();
-        m.register_pass<pass::ConvToBinaryConv>();
-        m.register_pass<pass::ConstantFolding>();
+        m.register_pass<ov::pass::InitNodeInfo>();
+        m.register_pass<ov::pass::ConvToBinaryConv>();
+        m.register_pass<ov::pass::ConstantFolding>();
         m.run_passes(f);
-        ASSERT_NO_THROW(check_rt_info(f));
+        OV_ASSERT_NO_THROW(check_rt_info(f));
     }
 
     {
@@ -129,7 +130,7 @@ TEST(TransformationTests, ConvToBinaryConvOutputLowMinusOneOutputHighOne) {
                                                         0.0f,
                                                         op::PadType::EXPLICIT);
 
-        f_ref = std::make_shared<Function>(NodeVector{conv}, ParameterVector{data});
+        f_ref = std::make_shared<Model>(NodeVector{conv}, ParameterVector{data});
     }
 
     auto res = compare_functions(f, f_ref);
@@ -137,7 +138,7 @@ TEST(TransformationTests, ConvToBinaryConvOutputLowMinusOneOutputHighOne) {
 }
 
 TEST(TransformationTests, NegativeConvToBinaryConvInvalidWeights) {
-    std::shared_ptr<Function> f(nullptr), f_ref(nullptr);
+    std::shared_ptr<Model> f(nullptr), f_ref(nullptr);
     {
         auto data = std::make_shared<opset5::Parameter>(element::f32, Shape{1, 3, 2, 2});
         auto act_in_low = opset5::Constant::create(element::f32, Shape{1}, {1.0f});
@@ -155,14 +156,14 @@ TEST(TransformationTests, NegativeConvToBinaryConvInvalidWeights) {
                                                           Strides{1, 1},
                                                           op::PadType::EXPLICIT);
 
-        f = std::make_shared<Function>(NodeVector{conv}, ParameterVector{data});
+        f = std::make_shared<Model>(NodeVector{conv}, ParameterVector{data});
 
         pass::Manager m;
-        m.register_pass<pass::InitNodeInfo>();
-        m.register_pass<pass::ConvToBinaryConv>();
-        m.register_pass<pass::ConstantFolding>();
+        m.register_pass<ov::pass::InitNodeInfo>();
+        m.register_pass<ov::pass::ConvToBinaryConv>();
+        m.register_pass<ov::pass::ConstantFolding>();
         m.run_passes(f);
-        ASSERT_NO_THROW(check_rt_info(f));
+        OV_ASSERT_NO_THROW(check_rt_info(f));
     }
 
     {
@@ -182,7 +183,7 @@ TEST(TransformationTests, NegativeConvToBinaryConvInvalidWeights) {
                                                           Strides{1, 1},
                                                           op::PadType::EXPLICIT);
 
-        f_ref = std::make_shared<Function>(NodeVector{conv}, ParameterVector{data});
+        f_ref = std::make_shared<Model>(NodeVector{conv}, ParameterVector{data});
     }
 
     auto res = compare_functions(f, f_ref);
@@ -190,7 +191,7 @@ TEST(TransformationTests, NegativeConvToBinaryConvInvalidWeights) {
 }
 
 TEST(TransformationTests, NegativeConvToBinaryConvInvalidLevels) {
-    std::shared_ptr<Function> f(nullptr), f_ref(nullptr);
+    std::shared_ptr<Model> f(nullptr), f_ref(nullptr);
     {
         auto data = std::make_shared<opset5::Parameter>(element::f32, Shape{1, 3, 2, 2});
         auto act_in_low = opset5::Constant::create(element::f32, Shape{1}, {1.0f});
@@ -208,14 +209,14 @@ TEST(TransformationTests, NegativeConvToBinaryConvInvalidLevels) {
                                                           Strides{1, 1},
                                                           op::PadType::EXPLICIT);
 
-        f = std::make_shared<Function>(NodeVector{conv}, ParameterVector{data});
+        f = std::make_shared<Model>(NodeVector{conv}, ParameterVector{data});
 
         pass::Manager m;
-        m.register_pass<pass::InitNodeInfo>();
-        m.register_pass<pass::ConvToBinaryConv>();
-        m.register_pass<pass::ConstantFolding>();
+        m.register_pass<ov::pass::InitNodeInfo>();
+        m.register_pass<ov::pass::ConvToBinaryConv>();
+        m.register_pass<ov::pass::ConstantFolding>();
         m.run_passes(f);
-        ASSERT_NO_THROW(check_rt_info(f));
+        OV_ASSERT_NO_THROW(check_rt_info(f));
     }
 
     {
@@ -235,7 +236,7 @@ TEST(TransformationTests, NegativeConvToBinaryConvInvalidLevels) {
                                                           Strides{1, 1},
                                                           op::PadType::EXPLICIT);
 
-        f_ref = std::make_shared<Function>(NodeVector{conv}, ParameterVector{data});
+        f_ref = std::make_shared<Model>(NodeVector{conv}, ParameterVector{data});
     }
 
     auto res = compare_functions(f, f_ref);
@@ -243,7 +244,7 @@ TEST(TransformationTests, NegativeConvToBinaryConvInvalidLevels) {
 }
 
 TEST(TransformationTests, NegativeConvToBinaryConvOutputLowHigh) {
-    std::shared_ptr<Function> f(nullptr), f_ref(nullptr);
+    std::shared_ptr<Model> f(nullptr), f_ref(nullptr);
     {
         auto data = std::make_shared<opset5::Parameter>(element::f32, Shape{1, 3, 2, 2});
         auto act_in_low = opset5::Constant::create(element::f32, Shape{1}, {1.0f});
@@ -261,14 +262,14 @@ TEST(TransformationTests, NegativeConvToBinaryConvOutputLowHigh) {
                                                           Strides{1, 1},
                                                           op::PadType::EXPLICIT);
 
-        f = std::make_shared<Function>(NodeVector{conv}, ParameterVector{data});
+        f = std::make_shared<Model>(NodeVector{conv}, ParameterVector{data});
 
         pass::Manager m;
-        m.register_pass<pass::InitNodeInfo>();
-        m.register_pass<pass::ConvToBinaryConv>();
-        m.register_pass<pass::ConstantFolding>();
+        m.register_pass<ov::pass::InitNodeInfo>();
+        m.register_pass<ov::pass::ConvToBinaryConv>();
+        m.register_pass<ov::pass::ConstantFolding>();
         m.run_passes(f);
-        ASSERT_NO_THROW(check_rt_info(f));
+        OV_ASSERT_NO_THROW(check_rt_info(f));
     }
 
     {
@@ -288,7 +289,7 @@ TEST(TransformationTests, NegativeConvToBinaryConvOutputLowHigh) {
                                                           Strides{1, 1},
                                                           op::PadType::EXPLICIT);
 
-        f_ref = std::make_shared<Function>(NodeVector{conv}, ParameterVector{data});
+        f_ref = std::make_shared<Model>(NodeVector{conv}, ParameterVector{data});
     }
 
     auto res = compare_functions(f, f_ref);

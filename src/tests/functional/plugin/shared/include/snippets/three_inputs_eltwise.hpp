@@ -11,23 +11,22 @@ namespace test {
 namespace snippets {
 
 typedef std::tuple<
-        ov::Shape,                   // Input 0 Shape
-        ov::Shape,                   // Input 1 Shape
-        ov::Shape,                   // Input 2 Shape
+        InputShape,                   // Input 0 Shape
+        InputShape,                   // Input 1 Shape
+        InputShape,                   // Input 2 Shape
         size_t,                      // Expected num nodes
         size_t,                      // Expected num subgraphs
         std::string                  // Target Device
 > ThreeInputsEltwiseParams;
 
 class ThreeInputsEltwise : public testing::WithParamInterface<ov::test::snippets::ThreeInputsEltwiseParams>,
-                   virtual public ov::test::SnippetsTestsCommon {
+                           virtual public SnippetsTestsCommon {
 public:
     static std::string getTestCaseName(testing::TestParamInfo<ov::test::snippets::ThreeInputsEltwiseParams> obj);
 
 protected:
     void SetUp() override;
 };
-
 
 } // namespace snippets
 } // namespace test

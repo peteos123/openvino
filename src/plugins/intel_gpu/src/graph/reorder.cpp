@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 #include "reorder_inst.h"
@@ -7,7 +7,9 @@
 #include "json_object.h"
 #include "intel_gpu/primitives/convolution.hpp"
 #include "intel_gpu/primitives/eltwise.hpp"
-
+#ifdef ENABLE_ONEDNN_FOR_GPU
+#include "graph/impls/onednn/utils.hpp"
+#endif // ENABLE_ONEDNN_FOR_GPU
 #include <algorithm>
 #include <string>
 
@@ -19,7 +21,7 @@ layout reorder_inst::calc_output_layout(reorder_node const& node, kernel_impl_pa
     auto ifmt = input_layout.format;
 
     auto desc = impl_param.typed_desc<reorder>();
-    auto odt = *desc->output_data_types[0];
+    auto odt = desc->output_data_types[0].value_or(input_layout.data_type);
     auto ofmt = desc->output_format;
     auto op = desc->output_paddings[0];
 
@@ -28,10 +30,16 @@ layout reorder_inst::calc_output_layout(reorder_node const& node, kernel_impl_pa
     }
 
     if (ifmt.is_nv12() && !desc->has_surface_input()) {
-        auto data_size = tensor{ input_layout.batch(), input_layout.feature() * 3,
-                                 input_layout.spatial(0), input_layout.spatial(1) };
+        const size_t h_dim = 1;
+        const size_t c_dim = 3;
+
+        auto out_shape = input_layout.get_partial_shape();
+        out_shape[c_dim] = 3;
+        if (desc->input_size() == 1)
+            out_shape[h_dim] = out_shape[h_dim] * 2 / 3;
+
         if (ofmt != ifmt)
-            return layout(odt, ofmt, data_size, op);
+            return layout(out_shape, odt, ofmt, op);
 
         CLDNN_ERROR_MESSAGE(desc->id, "No image_nv12 to image_nv12 reorder is supported");
     } else if (ofmt.is_winograd() && ifmt.is_winograd()) {
@@ -146,7 +154,11 @@ layout reorder_inst::calc_output_layout(reorder_node const& node, kernel_impl_pa
                             "Conversion of weights from winograd to standard domain is currently unsupported");
     }
 
-    if ((ofmt == format::bs_xs_xsv8_bsv8 || ofmt == format::os_i_osv8__ai8 || ofmt == format::os_i_osv16__ai8 || ofmt == format::bs_x_bsv16 ||
+    if (desc->weights_reorder_params) {
+        return desc->weights_reorder_params->get_output_layout();
+    }
+
+    if ((ofmt == format::bs_fs_fsv8_bsv8 || ofmt == format::os_i_osv8__ai8 || ofmt == format::os_i_osv16__ai8 || ofmt == format::os_i_osv16 ||
         ofmt == format::bfzyx || ifmt == format::bfzyx || ofmt == format::b_fs_zyx_fsv16 || ifmt == format::b_fs_zyx_fsv16 ||
         ofmt == format::bs_fs_zyx_bsv16_fsv16 || ifmt == format::bs_fs_zyx_bsv16_fsv16 ||
         ofmt == format::bs_fs_zyx_bsv16_fsv32 || ifmt == format::bs_fs_zyx_bsv16_fsv32 ||
@@ -169,7 +181,17 @@ std::vector<layout> reorder_inst::calc_output_layouts(reorder_node const& /*node
     auto ifmt = input_layout.format;
     auto ofmt = desc->output_format == format::any ? ifmt : desc->output_format;
 
-    return { layout(input_layout.get<ShapeType>(), desc->output_data_types[0].value(), ofmt, desc->output_paddings[0]) };
+    if (desc->weights_reorder_params) {
+#ifdef ENABLE_ONEDNN_FOR_GPU
+        auto onednn_weights_params = std::dynamic_pointer_cast<onednn::WeightsReorderParamsOneDNN>(desc->weights_reorder_params);
+        if (onednn_weights_params && input_layout.format != onednn::find_data_format(onednn_weights_params->_in_desc)) {
+            onednn_weights_params->_in_desc = onednn::layout_to_memory_desc(input_layout);
+        }
+#endif // ENABLE_ONEDNN_FOR_GPU
+        return { desc->weights_reorder_params->get_output_layout() };
+    } else {
+        return { layout(input_layout.get<ShapeType>(), desc->output_data_types[0].value(), ofmt, desc->output_paddings[0]) };
+    }
 }
 
 std::string reorder_inst::to_string(reorder_node const& node) {
@@ -197,16 +219,20 @@ std::string reorder_inst::to_string(reorder_node const& node) {
     return primitive_description.str();
 }
 
-reorder_inst::typed_primitive_inst(network& network, reorder_node const& node)
-    : parent(network, node, (!node.can_be_optimized() && node.get_output_layout().is_static()) ? true : false)
-    , _req_reinterpr(node.requires_reinterpret()) {
-    if (node.can_be_optimized())
-        reuse_input();
+reorder_inst::typed_primitive_inst(network& network) : parent(network) {
+    _type = reorder::type_id();
+}
+
+reorder_inst::typed_primitive_inst(network& network, reorder_node const& node) :
+        parent(network, node, !node.can_be_optimized()
+                              && (node.get_output_layout().is_static() || node.get_output_layout().has_upper_bound()))
+        , _req_reinterpr(node.requires_reinterpret()) {
+    update_output_memory();
 
     if (is_dynamic())
         return;
 
-    auto input_layout = node.input().get_output_layout();
+    auto input_layout = node.get_input_layout();
     auto output_layout = node.get_output_layout();
     if (input_layout.is_static() && output_layout.is_static()) {
         CLDNN_ERROR_LESS_THAN(node.id(),
@@ -237,11 +263,6 @@ reorder_inst::typed_primitive_inst(network& network, reorder_node const& node)
 }
 
 void reorder_inst::on_execute() {
-    if (can_be_optimized())
-        reuse_input();
-}
-
-void reorder_inst::reuse_input() {
     update_output_memory();
 }
 
@@ -249,11 +270,26 @@ void reorder_inst::update_output_memory() {
     if (!can_be_optimized())
         return;
 
-    if (static_cast<bool>(_outputs[0]) && _network.get_engine().is_the_same_buffer(output_memory(), input_memory()))
+    if (static_cast<bool>(_outputs[0])
+        && _network.get_engine().is_the_same_buffer(output_memory(), input_memory())
+        && output_memory().get_layout().identical(get_output_layout()))
         return;
 
     if (_node != nullptr)
         build_deps();
+
+    // Do not update output memory when reorder is optimized out
+    // but input memory is not allocated yet because input is dynamic.
+    // Since dep's _outputs may be empty, Check whether input memory is null by dep's outputs_allocated()
+    if (!dependencies().front().first->outputs_allocated())
+        return;
+
+    // Can_be_optimized nodes are allocating from memory_pool too. In this case,
+    // we need release the legacy output memory from memory pool explicitly.
+    if (static_cast<bool>(_outputs[0]) &&
+        _node->get_program().get_config().get_property(ov::intel_gpu::enable_memory_pool)) {
+        _network.get_memory_pool().release_memory(_outputs[0].get(), _node->get_unique_id(), _node->id(), _network.get_id());
+    }
 
     if (requires_reinterpret()) {
         _outputs[0] = _network.get_engine().reinterpret_buffer(input_memory(), get_output_layout());
@@ -261,15 +297,5 @@ void reorder_inst::update_output_memory() {
         _outputs[0] = input_memory_ptr();
     }
     _mem_allocated = false;
-}
-
-void reorder_inst::save(cldnn::BinaryOutputBuffer& ob) const {
-    parent::save(ob);
-    ob << _req_reinterpr;
-}
-
-void reorder_inst::load(cldnn::BinaryInputBuffer& ib) {
-    parent::load(ib);
-    ib >> _req_reinterpr;
 }
 }  // namespace cldnn

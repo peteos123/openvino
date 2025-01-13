@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -35,11 +35,26 @@ JitConstants FullyConnected_fb_oi_ref::GetJitConstants(const fully_connected_par
     return jit;
 }
 
-KernelsData FullyConnected_fb_oi_ref::GetKernelsData(const Params& params, const optional_params& optParams) const {
+bool FullyConnected_fb_oi_ref::Validate(const Params& p) const {
+    if (!FullyConnectedKernelBase::Validate(p)) {
+        return false;
+    }
+
+    const auto& params = static_cast<const fully_connected_params&>(p);
+
+    if (!params.bias.empty()) {
+        if (params.inputs[0].GetDType() != params.bias[0].GetDType()) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+KernelsData FullyConnected_fb_oi_ref::GetKernelsData(const Params& params) const {
     KernelsData res = {};
     for (size_t i = 0; i < autoTuneOptions.size(); i++) {
         KernelsData kd = GetTunedKernelsDataByIndex(params,
-                                                    optParams,
                                                     DataLayout::fb,
                                                     WeightsLayout::oi,
                                                     static_cast<int>(i));
@@ -50,7 +65,7 @@ KernelsData FullyConnected_fb_oi_ref::GetKernelsData(const Params& params, const
     return res;
 }
 
-KernelsPriority FullyConnected_fb_oi_ref::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority FullyConnected_fb_oi_ref::GetKernelsPriority(const Params& /*params*/) const {
     return DONT_USE_IF_HAVE_SOMETHING_ELSE;
 }
 }  // namespace kernel_selector

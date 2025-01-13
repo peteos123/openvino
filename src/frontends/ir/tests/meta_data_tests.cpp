@@ -6,9 +6,10 @@
 
 #include <string>
 
-#include "file_utils.h"
+#include "common_test_utils/common_utils.hpp"
 #include "openvino/core/any.hpp"
 #include "openvino/openvino.hpp"
+#include "openvino/util/file_util.hpp"
 
 class MetaData : public ::testing::Test {
 public:
@@ -392,8 +393,8 @@ TEST_F(MetaData, get_meta_data_as_map) {
 }
 
 TEST_F(MetaData, get_meta_data_from_removed_file) {
-    std::string file_path =
-        InferenceEngine::getIELibraryPath() + ov::util::FileTraits<char>::file_separator + "test_model.xml";
+    std::string file_path = ov::util::get_ov_lib_path() + ov::util::FileTraits<char>::file_separator +
+                            ov::test::utils::generateTestFilePrefix() + "_test_model.xml";
     // Create file
     {
         std::ofstream ir(file_path);

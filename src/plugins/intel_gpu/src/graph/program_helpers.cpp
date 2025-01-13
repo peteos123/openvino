@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -97,20 +97,28 @@ add_fusing_type onednn_add_fusing_helpers::get_add_fusing_type(
     if (!desc.is_type<eltwise>()) {
         return add_fusing_type::not_supported;
     }
-     if (desc.typed_desc<eltwise>()->mode != eltwise_mode::sum) {
-         return add_fusing_type::not_supported;
-     }
-
-    auto& dep_node = p_node.get_dependency(desc.dep_start_idx);
+    if (desc.typed_desc<eltwise>()->mode != eltwise_mode::sum) {
+        return add_fusing_type::not_supported;
+    }
+    if (!desc.has_outer_dep()) {
+        return add_fusing_type::not_supported;
+    }
+    auto& dep_node = p_node.get_dependency(desc.outer_dep_start_idx);
     auto p_layout = p_node.get_output_layout();
     auto d_layout = dep_node.get_output_layout();
+
+    if (p_node.is_dynamic() || dep_node.is_dynamic()) {
+        return add_fusing_type::not_supported;
+    }
 
     if (is_full_tensor(p_layout) && is_full_tensor(d_layout)) {
         if (data_type_traits::size_of(p_layout.data_type) == data_type_traits::size_of(d_layout.data_type)
             && p_layout.format == d_layout.format && p_layout.get_tensor() == d_layout.get_tensor()
             && p_layout.data_padding == d_layout.data_padding
             && dep_node.get_users().size() == 1
-            && !p_node.is_type<pooling>()) {
+            && !dep_node.is_constant()
+            && !p_node.is_type<pooling>()
+            && !(dep_node.get_program().is_body_program() && dep_node.is_type<input_layout>())) {
             return add_fusing_type::sum;
         } else if (p_layout.get_tensor() == d_layout.get_tensor()) {
             return add_fusing_type::binary_per_tensor;

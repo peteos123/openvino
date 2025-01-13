@@ -1,13 +1,13 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
+#include "transformations/common_optimizations/eliminate_duplicate_ti_inputs.hpp"
+
 #include <gtest/gtest.h>
 
-#include <openvino/opsets/opset10.hpp>
-#include <transformations/common_optimizations/eliminate_duplicate_ti_inputs.hpp>
-
-#include "common_test_utils/ngraph_test_utils.hpp"
+#include "common_test_utils/ov_test_utils.hpp"
+#include "openvino/opsets/opset10.hpp"
 
 using namespace testing;
 using namespace std;
@@ -69,7 +69,7 @@ TEST(TransformationTests, EliminateDuplicateTIInputs) {
 
     shared_ptr<TensorIterator> ti_after_transformation;
     for (const auto& op : model->get_ordered_ops()) {
-        if ((ti_after_transformation = dynamic_pointer_cast<TensorIterator>(op))) {
+        if ((ti_after_transformation = ov::as_type_ptr<TensorIterator>(op))) {
             break;
         }
     }

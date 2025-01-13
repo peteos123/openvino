@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <exception>
 #include <map>
 #include <unordered_set>
@@ -152,56 +153,17 @@ inline void skip_payload(std::istream& model, uint32_t payload_size) {
     model.seekg(payload_size, std::ios::cur);
 }
 }  // namespace onnx
-
-namespace prototxt {
-bool contains_onnx_model_keys(const std::string& model, const size_t expected_keys_num) {
-    size_t keys_found = 0;
-
-    const std::vector<std::string> onnx_keys = {"ir_version",
-                                                "producer_name",
-                                                "producer_version",
-                                                "domain",
-                                                "model_version",
-                                                "doc_string",
-                                                "graph",
-                                                "opset_import",
-                                                "metadata_props",
-                                                "training_info"};
-
-    size_t search_start_pos = 0;
-
-    while (keys_found < expected_keys_num) {
-        const auto key_finder = [&search_start_pos, &model](const std::string& key) {
-            const auto key_pos = model.find(key, search_start_pos);
-            if (key_pos != model.npos) {
-                // don't search from the beginning each time
-                search_start_pos = key_pos + key.size();
-                return true;
-            } else {
-                return false;
-            }
-        };
-
-        const auto found = std::any_of(std::begin(onnx_keys), std::end(onnx_keys), key_finder);
-        if (!found) {
-            break;
-        } else {
-            ++keys_found;
-        }
-    }
-
-    return keys_found == expected_keys_num;
-}
-}  // namespace prototxt
 }  // namespace
 
-namespace ngraph {
-namespace onnx_common {
+namespace ov {
+namespace frontend {
+namespace onnx {
+namespace common {
 bool is_valid_model(std::istream& model) {
     // the model usually starts with a 0x08 byte indicating the ir_version value
     // so this checker expects at least 3 valid ONNX keys to be found in the validated model
     const size_t EXPECTED_FIELDS_FOUND = 3u;
-    std::unordered_set<onnx::Field, std::hash<int>> onnx_fields_found = {};
+    std::unordered_set<::onnx::Field, std::hash<int>> onnx_fields_found = {};
     try {
         while (!model.eof() && onnx_fields_found.size() < EXPECTED_FIELDS_FOUND) {
             const auto field = ::onnx::decode_next_field(model);
@@ -211,7 +173,7 @@ bool is_valid_model(std::istream& model) {
                 return false;
             } else {
                 onnx_fields_found.insert(field.first);
-                onnx::skip_payload(model, field.second);
+                ::onnx::skip_payload(model, field.second);
             }
         }
 
@@ -220,5 +182,8 @@ bool is_valid_model(std::istream& model) {
         return false;
     }
 }
-}  // namespace onnx_common
-}  // namespace ngraph
+
+}  // namespace common
+}  // namespace onnx
+}  // namespace frontend
+}  // namespace ov

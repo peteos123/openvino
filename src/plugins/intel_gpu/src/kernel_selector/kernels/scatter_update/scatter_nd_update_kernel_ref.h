@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -16,13 +16,6 @@ struct scatter_nd_update_params : public base_params {
     size_t indices_rank;
 };
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// scatter_nd_update_optional_params
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-struct scatter_nd_update_optional_params : optional_params {
-    scatter_nd_update_optional_params() : optional_params(KernelType::SCATTER_ND_UPDATE) {}
-};
-
 class ScatterNDUpdateKernelRef : public KernelBaseOpenCL {
 public:
     struct DispatchData : public CommonDispatchData {
@@ -32,8 +25,8 @@ public:
     ScatterNDUpdateKernelRef() : KernelBaseOpenCL("scatter_nd_update_ref") {}
     virtual ~ScatterNDUpdateKernelRef() {}
     virtual JitConstants GetJitConstants(const scatter_nd_update_params& params) const;
-    virtual DispatchData SetDefault(const scatter_nd_update_params& params, const optional_params&, bool is_second) const;
-    KernelsData GetKernelsData(const Params& params, const optional_params& options) const override;
+    virtual DispatchData SetDefault(const scatter_nd_update_params& params, bool is_second) const;
+    KernelsData GetKernelsData(const Params& params) const override;
     ParamsKey GetSupportedKey() const override;
     std::vector<FusedOpType> GetSupportedFusedOps() const override {
         return { FusedOpType::QUANTIZE,
@@ -42,6 +35,7 @@ public:
     }
 
 protected:
-    bool Validate(const Params& p, const optional_params& o) const override;
+    bool Validate(const Params& p) const override;
+    void GetUpdateDispatchDataFunc(KernelData& kd) const override;
 };
 }  // namespace kernel_selector

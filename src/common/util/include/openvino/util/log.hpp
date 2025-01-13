@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -11,41 +11,7 @@
 
 namespace ov {
 namespace util {
-class ConstString {
-public:
-    template <size_t SIZE>
-    constexpr ConstString(const char (&p)[SIZE]) : m_string(p),
-                                                   m_size(SIZE) {}
 
-    constexpr char operator[](size_t i) const {
-        return i < m_size ? m_string[i] : throw std::out_of_range("");
-    }
-    constexpr const char* get_ptr(size_t offset) const {
-        return offset < m_size ? &m_string[offset] : m_string;
-    }
-    constexpr size_t size() const {
-        return m_size;
-    }
-
-private:
-    const char* m_string;
-    size_t m_size;
-};
-
-constexpr const char* find_last(ConstString s, size_t offset, char ch) {
-    return offset == 0 ? s.get_ptr(0) : (s[offset] == ch ? s.get_ptr(offset + 1) : find_last(s, offset - 1, ch));
-}
-
-constexpr const char* find_last(ConstString s, char ch) {
-    return find_last(s, s.size() - 1, ch);
-}
-
-constexpr const char* get_file_name(ConstString s) {
-    return find_last(s, '/');
-}
-constexpr const char* trim_file_name(ConstString root, ConstString s) {
-    return s.get_ptr(root.size());
-}
 enum class LOG_TYPE {
     _LOG_TYPE_ERROR,
     _LOG_TYPE_WARNING,
@@ -85,36 +51,62 @@ private:
 
 void default_logger_handler_func(const std::string& s);
 
-#ifndef PROJECT_ROOT_DIR
-#    define PROJECT_ROOT_DIR ""
+#ifdef ENABLE_OPENVINO_DEBUG
+/* Template function _write_all_to_stream has duplicates
+ * It's defined in:
+ * intel_cpu/src/utils/debug_capabilities and src/core/include/openvino/core/except.hpp
+ * To prevent loop dependencies this code is currently duplicated, but should be moved
+ * from intel_cpu, core and this place into one common library.
+ */
+static inline std::ostream& _write_all_to_stream(std::ostream& os) {
+    return os;
+}
+
+template <typename T, typename... TS>
+static inline std::ostream& _write_all_to_stream(std::ostream& os, const T& arg, TS&&... args) {
+    return ov::util::_write_all_to_stream(os << arg, std::forward<TS>(args)...);
+}
+
+#    define OPENVINO_LOG_STREAM(OPENVINO_HELPER_LOG_TYPE)                     \
+        ::ov::util::LogHelper(::ov::util::LOG_TYPE::OPENVINO_HELPER_LOG_TYPE, \
+                              __FILE__,                                       \
+                              __LINE__,                                       \
+                              ::ov::util::default_logger_handler_func)        \
+            .stream()
+
+#    define OPENVINO_ERR(...)                                                                  \
+        do {                                                                                   \
+            ov::util::_write_all_to_stream(OPENVINO_LOG_STREAM(_LOG_TYPE_ERROR), __VA_ARGS__); \
+        } while (0)
+
+#    define OPENVINO_WARN(...)                                                                   \
+        do {                                                                                     \
+            ov::util::_write_all_to_stream(OPENVINO_LOG_STREAM(_LOG_TYPE_WARNING), __VA_ARGS__); \
+        } while (0)
+
+#    define OPENVINO_INFO(...)                                                                \
+        do {                                                                                  \
+            ov::util::_write_all_to_stream(OPENVINO_LOG_STREAM(_LOG_TYPE_INFO), __VA_ARGS__); \
+        } while (0)
+
+#    define OPENVINO_DEBUG(...)                                                                \
+        do {                                                                                   \
+            ov::util::_write_all_to_stream(OPENVINO_LOG_STREAM(_LOG_TYPE_DEBUG), __VA_ARGS__); \
+        } while (0)
+#else
+#    define OPENVINO_ERR(...) \
+        do {                  \
+        } while (0)
+#    define OPENVINO_WARN(...) \
+        do {                   \
+        } while (0)
+#    define OPENVINO_INFO(...) \
+        do {                   \
+        } while (0)
+#    define OPENVINO_DEBUG(...) \
+        do {                    \
+        } while (0)
 #endif
 
-#define OPENVINO_ERR                                                              \
-    ::ov::util::LogHelper(::ov::util::LOG_TYPE::_LOG_TYPE_ERROR,                  \
-                          ::ov::util::trim_file_name(PROJECT_ROOT_DIR, __FILE__), \
-                          __LINE__,                                               \
-                          ::ov::util::default_logger_handler_func)                \
-        .stream()
-
-#define OPENVINO_WARN                                                             \
-    ::ov::util::LogHelper(::ov::util::LOG_TYPE::_LOG_TYPE_WARNING,                \
-                          ::ov::util::trim_file_name(PROJECT_ROOT_DIR, __FILE__), \
-                          __LINE__,                                               \
-                          ::ov::util::default_logger_handler_func)                \
-        .stream()
-
-#define OPENVINO_INFO                                                             \
-    ::ov::util::LogHelper(::ov::util::LOG_TYPE::_LOG_TYPE_INFO,                   \
-                          ::ov::util::trim_file_name(PROJECT_ROOT_DIR, __FILE__), \
-                          __LINE__,                                               \
-                          ::ov::util::default_logger_handler_func)                \
-        .stream()
-
-#define OPENVINO_DEBUG                                                            \
-    ::ov::util::LogHelper(::ov::util::LOG_TYPE::_LOG_TYPE_DEBUG,                  \
-                          ::ov::util::trim_file_name(PROJECT_ROOT_DIR, __FILE__), \
-                          __LINE__,                                               \
-                          ::ov::util::default_logger_handler_func)                \
-        .stream()
 }  // namespace util
 }  // namespace ov

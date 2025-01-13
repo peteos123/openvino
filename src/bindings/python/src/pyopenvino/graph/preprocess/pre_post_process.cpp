@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -11,6 +11,7 @@
 #include "openvino/core/node.hpp"
 #include "openvino/core/preprocess/pre_post_process.hpp"
 #include "pyopenvino/core/common.hpp"
+#include "pyopenvino/utils/utils.hpp"
 
 namespace py = pybind11;
 
@@ -169,6 +170,62 @@ static void regclass_graph_PreProcessSteps(py::module m) {
     steps.def("reverse_channels", [](ov::preprocess::PreProcessSteps& self) {
         return &self.reverse_channels();
     });
+
+    steps.def(
+        "pad",
+        [](ov::preprocess::PreProcessSteps& self,
+           const std::vector<int>& pads_begin,
+           const std::vector<int>& pads_end,
+           float value,
+           ov::preprocess::PaddingMode mode) {
+            return &self.pad(pads_begin, pads_end, value, mode);
+        },
+        py::arg("pads_begin"),
+        py::arg("pads_end"),
+        py::arg("value"),
+        py::arg("mode"),
+        R"(
+            Adds padding preprocessing operation.
+
+            :param pads_begin: Number of elements matches the number of indices in data attribute. Specifies the number of padding elements at the ending of each axis.
+            :type pads_begin: 1D tensor of type T_INT.
+            :param pads_end: Number of elements matches the number of indices in data attribute. Specifies the number of padding elements at the ending of each axis.
+            :type pads_end: 1D tensor of type T_INT.
+            :param value: All new elements are populated with this value or with 0 if input not provided. Shouldn’t be set for other pad_mode values.
+            :type value: scalar tensor of type T.
+            :param mode: pad_mode specifies the method used to generate new element values.
+            :type mode: string
+            :return: Reference to itself, allows chaining of calls in client's code in a builder-like manner.
+            :rtype: openvino.preprocess.PreProcessSteps
+        )");
+
+    steps.def(
+        "pad",
+        [](ov::preprocess::PreProcessSteps& self,
+           const std::vector<int>& pads_begin,
+           const std::vector<int>& pads_end,
+           const std::vector<float>& values,
+           ov::preprocess::PaddingMode mode) {
+            return &self.pad(pads_begin, pads_end, values, mode);
+        },
+        py::arg("pads_begin"),
+        py::arg("pads_end"),
+        py::arg("value"),
+        py::arg("mode"),
+        R"(
+            Adds padding preprocessing operation.
+
+            :param pads_begin: Number of elements matches the number of indices in data attribute. Specifies the number of padding elements at the ending of each axis.
+            :type pads_begin: 1D tensor of type T_INT.
+            :param pads_end: Number of elements matches the number of indices in data attribute. Specifies the number of padding elements at the ending of each axis.
+            :type pads_end: 1D tensor of type T_INT.
+            :param value: All new elements are populated with this value or with 0 if input not provided. Shouldn’t be set for other pad_mode values.
+            :type value: scalar tensor of type T.
+            :param mode: pad_mode specifies the method used to generate new element values.
+            :type mode: string
+            :return: Reference to itself, allows chaining of calls in client's code in a builder-like manner.
+            :rtype: openvino.runtime.PreProcessSteps
+        )");
 }
 
 static void regclass_graph_PostProcessSteps(py::module m) {
@@ -252,7 +309,8 @@ static void regclass_graph_InputTensorInfo(py::module m) {
         },
         py::arg("layout"),
         R"(
-            Set layout for input tensor info 
+            Set layout for input tensor info
+
             :param layout: layout to be set
             :type layout: Union[str, openvino.runtime.Layout]
         )");
@@ -322,7 +380,7 @@ static void regclass_graph_InputTensorInfo(py::module m) {
         "set_from",
         [](ov::preprocess::InputTensorInfo& self, py::array& numpy_array) {
             // Convert to contiguous array if not already C-style.
-            return &self.set_from(Common::tensor_from_numpy(numpy_array, false));
+            return &self.set_from(Common::object_from_data<ov::Tensor>(numpy_array, false));
         },
         py::arg("runtime_tensor"),
         R"(
@@ -366,7 +424,8 @@ static void regclass_graph_OutputTensorInfo(py::module m) {
         },
         py::arg("layout"),
         R"(
-            Set layout for output tensor info 
+            Set layout for output tensor info
+
             :param layout: layout to be set
             :type layout: Union[str, openvino.runtime.Layout]
         )");
@@ -419,7 +478,8 @@ static void regclass_graph_OutputModelInfo(py::module m) {
         },
         py::arg("layout"),
         R"(
-            Set layout for output model info 
+            Set layout for output model info
+
             :param layout: layout to be set
             :type layout: Union[str, openvino.runtime.Layout]
         )");
@@ -453,6 +513,7 @@ static void regenum_graph_ColorFormat(py::module m) {
         .value("I420_THREE_PLANES", ov::preprocess::ColorFormat::I420_THREE_PLANES)
         .value("RGB", ov::preprocess::ColorFormat::RGB)
         .value("BGR", ov::preprocess::ColorFormat::BGR)
+        .value("GRAY", ov::preprocess::ColorFormat::GRAY)
         .value("RGBX", ov::preprocess::ColorFormat::RGBX)
         .value("BGRX", ov::preprocess::ColorFormat::BGRX)
         .export_values();
@@ -463,6 +524,16 @@ static void regenum_graph_ResizeAlgorithm(py::module m) {
         .value("RESIZE_LINEAR", ov::preprocess::ResizeAlgorithm::RESIZE_LINEAR)
         .value("RESIZE_CUBIC", ov::preprocess::ResizeAlgorithm::RESIZE_CUBIC)
         .value("RESIZE_NEAREST", ov::preprocess::ResizeAlgorithm::RESIZE_NEAREST)
+        .value("RESIZE_BILINEAR_PILLOW", ov::preprocess::ResizeAlgorithm::RESIZE_BILINEAR_PILLOW)
+        .value("RESIZE_BICUBIC_PILLOW", ov::preprocess::ResizeAlgorithm::RESIZE_BICUBIC_PILLOW)
+        .export_values();
+}
+
+static void regenum_graph_PaddingMode(py::module m) {
+    py::enum_<ov::preprocess::PaddingMode>(m, "PaddingMode")
+        .value("CONSTANT", ov::preprocess::PaddingMode::CONSTANT)
+        .value("REFLECT", ov::preprocess::PaddingMode::REFLECT)
+        .value("SYMMETRIC", ov::preprocess::PaddingMode::SYMMETRIC)
         .export_values();
 }
 
@@ -477,12 +548,20 @@ void regclass_graph_PrePostProcessor(py::module m) {
     regclass_graph_OutputModelInfo(m);
     regenum_graph_ColorFormat(m);
     regenum_graph_ResizeAlgorithm(m);
+    regenum_graph_PaddingMode(m);
     py::class_<ov::preprocess::PrePostProcessor, std::shared_ptr<ov::preprocess::PrePostProcessor>> proc(
         m,
         "PrePostProcessor");
     proc.doc() = "openvino.runtime.preprocess.PrePostProcessor wraps ov::preprocess::PrePostProcessor";
 
-    proc.def(py::init<const std::shared_ptr<ov::Model>&>(), py::arg("model"));
+    proc.def(py::init([](const py::object& ie_api_model) {
+                 const auto model = Common::utils::convert_to_model(ie_api_model);
+                 return std::make_shared<ov::preprocess::PrePostProcessor>(model);
+             }),
+             py::arg("model"),
+             R"(
+             It creates PrePostProcessor.
+    )");
 
     proc.def("input", [](ov::preprocess::PrePostProcessor& self) {
         return &self.input();
@@ -520,7 +599,15 @@ void regclass_graph_PrePostProcessor(py::module m) {
         },
         py::arg("output_index"));
 
-    proc.def("build", &ov::preprocess::PrePostProcessor::build, py::call_guard<py::gil_scoped_release>());
+    proc.def("build", [](ov::preprocess::PrePostProcessor& self) {
+        std::shared_ptr<ov::Model> model;
+        {
+            py::gil_scoped_release release;
+            model = self.build();
+        }
+        py::type model_class = py::module_::import("openvino.runtime").attr("Model");
+        return model_class(py::cast(model));
+    });
 
     proc.def("__str__", [](const ov::preprocess::PrePostProcessor& self) -> std::string {
         std::stringstream ss;
@@ -529,6 +616,6 @@ void regclass_graph_PrePostProcessor(py::module m) {
     });
 
     proc.def("__repr__", [](const ov::preprocess::PrePostProcessor& self) -> std::string {
-        return "<PrePostProcessor: " + py::cast(self).attr("__str__")().cast<std::string>() + ">";
+        return "<" + Common::get_class_name(self) + ": " + py::cast(self).attr("__str__")().cast<std::string>() + ">";
     });
 }

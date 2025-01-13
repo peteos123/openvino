@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -26,8 +26,8 @@ ParamsKey convolution_kernel_bfyx_1x1_opt::GetSupportedKey() const {
     return k;
 }
 
-DeviceFeaturesKey convolution_kernel_bfyx_1x1_opt::get_required_device_features_key(const Params& params, const optional_params& options) const {
-    auto k = get_common_subgroups_device_features_key(params, options);
+DeviceFeaturesKey convolution_kernel_bfyx_1x1_opt::get_required_device_features_key(const Params& params) const {
+    auto k = get_common_subgroups_device_features_key(params);
     k.requires_subgroup_shuffle();
 
     return k;
@@ -89,12 +89,12 @@ ConvolutionKernelBase::DispatchData convolution_kernel_bfyx_1x1_opt::SetDefault(
     return dispatchData;
 }
 
-KernelsPriority convolution_kernel_bfyx_1x1_opt::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority convolution_kernel_bfyx_1x1_opt::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_1;
 }
 
-bool convolution_kernel_bfyx_1x1_opt::Validate(const Params& p, const optional_params& o) const {
-    if (!ConvolutionKernelBase::Validate(p, o)) {
+bool convolution_kernel_bfyx_1x1_opt::Validate(const Params& p) const {
+    if (!ConvolutionKernelBase::Validate(p)) {
         return false;
     }
     const convolution_params& cp = static_cast<const convolution_params&>(p);
@@ -111,7 +111,7 @@ bool convolution_kernel_bfyx_1x1_opt::Validate(const Params& p, const optional_p
     if (cp.outputs[0].Feature().v % 64 != 0)
         return false;
 
-    if (cp.padding.x != 0 || cp.padding.y != 0)
+    if (cp.padding_begin.x != 0 || cp.padding_begin.y != 0)
         return false;
 
     if (cp.inputs[0].Feature().v % 2 != 0) {
@@ -155,9 +155,8 @@ WeightsLayout convolution_kernel_bfyx_1x1_opt::GetPreferredWeightsLayout(const c
         return WeightsLayout::yxio;
 }
 
-KernelsData convolution_kernel_bfyx_1x1_opt::GetKernelsData(const Params& params,
-                                                            const optional_params& options) const {
-    KernelsData kd = GetCommonKernelsData(params, options);
+KernelsData convolution_kernel_bfyx_1x1_opt::GetKernelsData(const Params& params) const {
+    KernelsData kd = GetCommonKernelsData(params);
     return kd;
 }
 

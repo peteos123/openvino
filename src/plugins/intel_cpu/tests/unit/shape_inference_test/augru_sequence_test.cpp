@@ -1,15 +1,11 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "ov_ops/augru_sequence.hpp"
-
 #include <gtest/gtest.h>
 
-#include <openvino/op/ops.hpp>
-#include <openvino/op/parameter.hpp>
-#include <utils/shape_inference/shape_inference.hpp>
-#include <utils/shape_inference/static_shape.hpp>
+#include "ov_ops/augru_sequence.hpp"
+#include "utils.hpp"
 
 using namespace ov;
 using namespace ov::intel_cpu;
@@ -42,9 +38,7 @@ TEST(StaticShapeInferenceTest, AGRUSequenceTest_FORWARD_all_static_rank) {
         StaticShape{num_directions, gates_count * hidden_size},               // B
         StaticShape{batch_size, seq_len, 1}};                                 // A
 
-    std::vector<StaticShape> static_output_shapes{StaticShape{}, StaticShape{}};
-
-    shape_inference(augru_sequence.get(), static_input_shapes, static_output_shapes);
+    const auto static_output_shapes = shape_inference(augru_sequence.get(), static_input_shapes);
     EXPECT_EQ(static_output_shapes[0], StaticShape({batch_size, num_directions, seq_len, hidden_size}));
     EXPECT_EQ(static_output_shapes[1], StaticShape({batch_size, num_directions, hidden_size}));
 }
@@ -77,9 +71,7 @@ TEST(StaticShapeInferenceTest, AGRUSequenceTest_FORWARD_all_inputs_dynamic_rank)
         StaticShape{num_directions, gates_count * hidden_size},               // B
         StaticShape{batch_size, seq_len, 1}};                                 // A
 
-    std::vector<StaticShape> static_output_shapes{StaticShape{}, StaticShape{}};
-
-    shape_inference(augru_sequence.get(), static_input_shapes, static_output_shapes);
+    const auto static_output_shapes = shape_inference(augru_sequence.get(), static_input_shapes);
     EXPECT_EQ(static_output_shapes[0], StaticShape({batch_size, num_directions, seq_len, hidden_size}));
     EXPECT_EQ(static_output_shapes[1], StaticShape({batch_size, num_directions, hidden_size}));
 }

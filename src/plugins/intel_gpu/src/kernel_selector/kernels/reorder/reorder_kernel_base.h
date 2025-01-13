@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -26,6 +26,7 @@ struct reorder_params : public base_params {
     bool winograd = false;
     bool has_padded_output = false;
     bool surface_input = false;
+    bool truncate = false;
 
     ParamsKey GetParamsKey() const override {
         auto k = base_params::GetParamsKey();
@@ -39,13 +40,6 @@ struct reorder_params : public base_params {
         }
         return k;
     }
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// reorder_optional_params
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-struct reorder_optional_params : optional_params {
-    reorder_optional_params() : optional_params(KernelType::REORDER) {}
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -111,9 +105,9 @@ protected:
     virtual JitConstants GetJitConstants(const reorder_params& params) const;
     virtual DispatchData SetDefault(const reorder_weights_params& params) const;
     virtual DispatchData SetDefault(const reorder_params& params) const;
-    bool Validate(const Params&, const optional_params&) const override { return true; }
-    KernelsData GetCommonKernelsData(const reorder_weights_params& params,
-                                     const optional_params&) const;
-    KernelsData GetCommonKernelsData(const reorder_params& params, const optional_params&) const;
+    bool Validate(const Params&) const override { return true; }
+    KernelsData GetCommonKernelsData(const reorder_weights_params& params) const;
+    KernelsData GetCommonKernelsData(const reorder_params& params) const;
+    void GetUpdateDispatchDataFunc(KernelData& kd) const override;
 };
 }  // namespace kernel_selector

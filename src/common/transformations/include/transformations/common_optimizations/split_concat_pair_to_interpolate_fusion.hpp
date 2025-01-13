@@ -1,14 +1,14 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
 #include <memory>
-#include <openvino/pass/graph_rewrite.hpp>
-#include <openvino/pass/pattern/matcher.hpp>
-#include <transformations_visibility.hpp>
 #include <vector>
+
+#include "openvino/pass/matcher_pass.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 namespace pass {
@@ -19,18 +19,12 @@ class TRANSFORMATIONS_API SplitConcatPairToInterpolateFusion;
 }  // namespace ov
 
 /**
- * @ingroup ie_transformation_common_api
+ * @ingroup ov_transformation_common_api
  * @brief SplitConcatPairToInterpolateFusion transformation replaces group of
  * operations: Split -> Concat to Interpolate op.
  */
 class ov::pass::SplitConcatPairToInterpolateFusion : public ov::pass::MatcherPass {
 public:
-    OPENVINO_RTTI("SplitConcatPairToInterpolateFusion", "0");
+    OPENVINO_MATCHER_PASS_RTTI("SplitConcatPairToInterpolateFusion");
     SplitConcatPairToInterpolateFusion(bool use_shape_for_elimination = true);
 };
-
-namespace ngraph {
-namespace pass {
-using ov::pass::SplitConcatPairToInterpolateFusion;
-}  // namespace pass
-}  // namespace ngraph

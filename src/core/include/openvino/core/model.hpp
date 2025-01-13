@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "openvino/core/any.hpp"
@@ -26,9 +27,10 @@
 
 namespace ov {
 class Model;
+class CompiledModel;
+class ICompiledModel;
 
-OPENVINO_API
-std::shared_ptr<Model> clone_model(const Model& func, std::unordered_map<Node*, std::shared_ptr<Node>>& node_map);
+std::shared_ptr<Model> clone_ov_model(const Model& func, std::unordered_map<Node*, std::shared_ptr<Node>>& node_map);
 
 namespace frontend {
 class FrontEnd;
@@ -42,13 +44,15 @@ class ModelAccessor;
  */
 class OPENVINO_API Model : public std::enable_shared_from_this<Model> {
     friend class frontend::FrontEnd;
-    friend OPENVINO_API std::shared_ptr<Model> clone_model(const Model& func,
-                                                           std::unordered_map<Node*, std::shared_ptr<Node>>& node_map);
-    std::shared_ptr<void> m_shared_object;  // Frontend plugin shared object handle.
+    friend class ov::CompiledModel;
+    friend class ov::ICompiledModel;
+    friend std::shared_ptr<Model> clone_ov_model(const Model& func,
+                                                 std::unordered_map<Node*, std::shared_ptr<Node>>& node_map);
+    std::shared_ptr<void> m_shared_object;  // plugin shared object handle.
 
 public:
     _OPENVINO_HIDDEN_METHOD static const ::ov::DiscreteTypeInfo& get_type_info_static() {
-        static const ::ov::DiscreteTypeInfo type_info_static{"Model", static_cast<uint64_t>(0)};
+        static const ::ov::DiscreteTypeInfo type_info_static{"Model"};
         return type_info_static;
     }
     const ::ov::DiscreteTypeInfo& get_type_info() const {
@@ -136,10 +140,14 @@ public:
     ov::Output<ov::Node> add_output(const std::string& op_name, size_t output_idx);
     ov::Output<ov::Node> add_output(const ov::Output<ov::Node>& port);
 
-    void reshape(const ov::PartialShape& partial_shape);
-    void reshape(const std::map<size_t, ov::PartialShape>& partial_shapes);
-    void reshape(const std::map<std::string, ov::PartialShape>& partial_shapes);
-    void reshape(const std::map<ov::Output<ov::Node>, ov::PartialShape>& partial_shapes);
+    void reshape(const ov::PartialShape& partial_shape,
+                 const std::unordered_map<std::string, ov::PartialShape>& variable_shapes = {});
+    void reshape(const std::map<size_t, ov::PartialShape>& partial_shapes,
+                 const std::unordered_map<std::string, ov::PartialShape>& variable_shapes = {});
+    void reshape(const std::map<std::string, ov::PartialShape>& partial_shapes,
+                 const std::unordered_map<std::string, ov::PartialShape>& variable_shapes = {});
+    void reshape(const std::map<ov::Output<ov::Node>, ov::PartialShape>& partial_shapes,
+                 const std::unordered_map<std::string, ov::PartialShape>& variable_shapes = {});
 
     /// Return the element type of output i
     const ov::element::Type& get_output_element_type(size_t i) const;
@@ -221,18 +229,6 @@ public:
     /// \param value Output containing Node
     int64_t get_result_index(const ov::Output<const ov::Node>& value) const;
 
-    /// \deprecated Use evaluate with ov::Tensor instead
-    /// \brief Evaluate the model on inputs, putting results in outputs.
-    /// \param output_tensors Tensors for the outputs to compute. One for each result
-    /// \param input_tensors Tensors for the inputs. One for each inputs.
-    /// \param evaluation_context Storage of additional settings and attributes that can be used
-    /// when evaluating the model. This additional information can be shared across nodes.
-    OPENVINO_DEPRECATED(
-        "This method is deprecated and will be removed soon. Please use evaluate with ov::Tensor instead.")
-    bool evaluate(const ov::HostTensorVector& output_tensors,
-                  const ov::HostTensorVector& input_tensors,
-                  ov::EvaluationContext evaluation_context = ov::EvaluationContext()) const;
-
     /// \brief Evaluate the model on inputs, putting results in outputs.
     /// \param output_tensors Tensors for the outputs to compute. One for each result
     /// \param input_tensors Tensors for the inputs. One for each inputs.
@@ -240,7 +236,12 @@ public:
     /// when evaluating the model. This additional information can be shared across nodes.
     bool evaluate(ov::TensorVector& output_tensors,
                   const ov::TensorVector& input_tensors,
-                  ov::EvaluationContext evaluation_context = ov::EvaluationContext()) const;
+                  ov::EvaluationContext& evaluation_context) const;
+
+    /// \brief Evaluate the model on inputs, putting results in outputs.
+    /// \param output_tensors Tensors for the outputs to compute. One for each result
+    /// \param input_tensors Tensors for the inputs. One for each inputs.
+    bool evaluate(ov::TensorVector& output_tensors, const ov::TensorVector& input_tensors) const;
 
     /// \brief Return a list of model's sinks.
     const ov::SinkVector& get_sinks() const {
@@ -417,7 +418,7 @@ public:
      */
     template <class T, class... Args>
     void set_rt_info(const T& argument, Args... args) {
-        ov::Any& arg = get_rt_arg<Args...>(m_rt_info, args...);
+        ov::Any& arg = get_rt_arg<Args...>(m_rt_info, std::move(args)...);
         arg = argument;
     }
 
@@ -452,6 +453,10 @@ private:
                                const std::vector<std::string>::const_iterator& begin,
                                const std::vector<std::string>::const_iterator& end) const;
 
+    bool has_rt_info(const ov::AnyMap& info,
+                     const std::vector<std::string>::const_iterator& begin,
+                     const std::vector<std::string>::const_iterator& end) const;
+
     // Checks rt attribute
     template <class T,
               typename std::enable_if<std::is_same<std::string, T>::value || std::is_same<T, const char*>::value ||
@@ -482,8 +487,8 @@ private:
                                           std::is_same<T, char*>::value,
                                       bool>::type = true>
     const ov::Any& get_rt_arg(const ov::AnyMap& rt_info, const T& name) const {
-        if (rt_info.find(name) == rt_info.end())
-            throw ov::Exception("Cannot get runtime attribute. Path to runtime attribute is incorrect.");
+        OPENVINO_ASSERT(rt_info.find(name) != rt_info.end(),
+                        "Cannot get runtime attribute. Path to runtime attribute is incorrect.");
         return get_attr(rt_info.at(name));
     }
 
@@ -555,6 +560,7 @@ private:
     // of weak_ptr not to increase node ref counter to prevent the situation when
     // node has no consumers but still exists in a graph.
     mutable std::vector<std::weak_ptr<Node>> m_cached_ordered_ops;
+    mutable std::unordered_set<Node*> m_cached_ops;
 
     mutable std::unordered_map<std::string, Output<Node>> m_cached_output_names;
     mutable std::unordered_map<std::string, std::weak_ptr<Node>> m_cached_op_names;

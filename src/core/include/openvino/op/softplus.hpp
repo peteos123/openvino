@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -15,21 +15,18 @@ namespace v4 {
 /// \ingroup ov_ops_cpp_api
 class OPENVINO_API SoftPlus : public util::UnaryElementwiseArithmetic {
 public:
-    OPENVINO_OP("SoftPlus", "opset4", util::UnaryElementwiseArithmetic, 4);
+    OPENVINO_OP("SoftPlus", "opset4", util::UnaryElementwiseArithmetic);
 
     SoftPlus() = default;
     /// \brief Constructs an SoftPlus operation.
     ///
     /// \param data Input tensor
     SoftPlus(const Output<Node>& arg);
-    bool visit_attributes(AttributeVisitor& visitor) override;
     void validate_and_infer_types() override;
 
     std::shared_ptr<Node> clone_with_new_inputs(const OutputVector& new_args) const override;
 
-    OPENVINO_SUPPRESS_DEPRECATED_START
-    bool evaluate(const HostTensorVector& outputs, const HostTensorVector& inputs) const override;
-    OPENVINO_SUPPRESS_DEPRECATED_END
+    bool evaluate(TensorVector& outputs, const TensorVector& inputs) const override;
     bool has_evaluate() const override;
 };
 }  // namespace v4

@@ -1,12 +1,9 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 #include <gtest/gtest.h>
 
-#include <openvino/op/ops.hpp>
-#include <openvino/op/parameter.hpp>
-#include <utils/shape_inference/shape_inference.hpp>
-#include <utils/shape_inference/static_shape.hpp>
+#include "utils.hpp"
 
 using namespace ov;
 using namespace ov::intel_cpu;
@@ -33,8 +30,8 @@ void readValueTest() {
     auto readValue = constructGraph<T>();
 
     // Test StaticShape
-    std::vector<StaticShape> static_input_shapes = {StaticShape{1, 2, 64, 64}}, static_output_shapes = {StaticShape{}};
-    shape_inference(readValue.get(), static_input_shapes, static_output_shapes);
+    std::vector<StaticShape> static_input_shapes = {StaticShape{1, 2, 64, 64}};
+    const auto static_output_shapes = shape_inference(readValue.get(), static_input_shapes);
     ASSERT_EQ(static_output_shapes[0], (StaticShape{1, 2, 64, 64}));
 }
 

@@ -1,15 +1,11 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <ie_common.h>
-#include <node.h>
-#include <string>
-#include <memory>
-#include <vector>
 #include "common/permute_kernel.h"
+#include "node.h"
 
 namespace ov {
 namespace intel_cpu {
@@ -17,11 +13,11 @@ namespace node {
 
 class ShuffleChannels : public Node {
 public:
-    ShuffleChannels(const std::shared_ptr<ngraph::Node>& op, const GraphContext::CPtr context);
+    ShuffleChannels(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr context);
     ~ShuffleChannels() override = default;
 
-    static bool isSupportedOperation(const std::shared_ptr<const ngraph::Node>& op, std::string& errorMessage) noexcept;
-    void getSupportedDescriptors() override {};
+    static bool isSupportedOperation(const std::shared_ptr<const ov::Node>& op, std::string& errorMessage) noexcept;
+    void getSupportedDescriptors() override{};
     void initSupportedPrimitiveDescriptors() override;
     void createPrimitive() override;
     void execute(dnnl::stream strm) override;
@@ -57,10 +53,8 @@ private:
     };
     using executorPtr = std::shared_ptr<ShuffleChannelsExecutor>;
     executorPtr execPtr = nullptr;
-
-    bool supportDynamicBatch = false;
 };
 
-}   // namespace node
-}   // namespace intel_cpu
-}   // namespace ov
+}  // namespace node
+}  // namespace intel_cpu
+}  // namespace ov

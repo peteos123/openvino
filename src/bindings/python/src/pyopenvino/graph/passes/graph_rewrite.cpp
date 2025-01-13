@@ -1,4 +1,4 @@
-// Copyright (C) 2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -6,8 +6,9 @@
 
 #include <pybind11/pybind11.h>
 
-#include <openvino/pass/graph_rewrite.hpp>
-#include <openvino/pass/pass.hpp>
+#include <openvino/pass/backward_graph_rewrite.hpp>
+
+#include "pyopenvino/core/common.hpp"
 
 namespace py = pybind11;
 
@@ -72,4 +73,8 @@ void regclass_passes_GraphRewrite(py::module m) {
         :param pass: openvino.runtime.passes.MatcherPass instance
         :type pass: openvino.runtime.passes.MatcherPass
     )");
+
+    back_graph_rewrite.def("__repr__", [](const ov::pass::BackwardGraphRewrite& self) {
+        return Common::get_simple_repr(self);
+    });
 }

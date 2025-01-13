@@ -1,4 +1,4 @@
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -12,11 +12,10 @@ ov_add_test_target(
         gtest
         gtest_main
         openvino::runtime::dev
-        commonTestUtils
-        lptNgraphFunctions
+        common_test_utils
+        ov_lpt_models
         gmock
-    ADD_CLANG_FORMAT
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     LABELS
-        LP_TRANSFORMATIONS
+        OV UNIT LP_TRANSFORMATIONS
 )

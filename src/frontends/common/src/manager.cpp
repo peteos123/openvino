@@ -1,14 +1,13 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "openvino/frontend/manager.hpp"
 
-#include <openvino/util/env_util.hpp>
-#include <openvino/util/file_util.hpp>
-
 #include "openvino/frontend/exception.hpp"
 #include "openvino/util/env_util.hpp"
+#include "openvino/util/file_util.hpp"
+#include "openvino/util/log.hpp"
 #include "plugin_loader.hpp"
 #include "utils.hpp"
 
@@ -18,11 +17,6 @@ using namespace ov::frontend;
 class FrontEndManager::Impl {
     std::mutex m_loading_mutex;
     std::vector<PluginInfo> m_plugins;
-
-    /// \brief map of shared object per frontend <frontend_name, frontend_so_ptr>
-    static std::unordered_map<std::string, std::shared_ptr<void>> m_shared_objects_map;
-    /// \brief Mutex to guard access the shared object map
-    static std::mutex m_shared_objects_map_mutex;
 
 public:
     Impl() {
@@ -35,21 +29,18 @@ public:
         auto fe_obj = std::make_shared<FrontEnd>();
         fe_obj->m_shared_object = std::make_shared<FrontEndSharedData>(plugin.get_so_pointer());
         fe_obj->m_actual = plugin.get_creator().m_creator();
-
-        std::lock_guard<std::mutex> guard(m_shared_objects_map_mutex);
-        m_shared_objects_map.emplace(plugin.get_creator().m_name, fe_obj->m_shared_object);
-
         return fe_obj;
     }
 
     FrontEnd::Ptr load_by_framework(const std::string& framework) {
         // Mapping of default FE name to file name (without prefix and suffix)
-        static const std::map<std::string, std::string> predefined_frontends = {
-            {"ir", "ir"},
-            {"onnx", "onnx"},
-            {"tf", "tensorflow"},
-            {"paddle", "paddle"},
-        };
+        static const std::map<std::string, std::string> predefined_frontends = {{"ir", "ir"},
+                                                                                {"onnx", "onnx"},
+                                                                                {"tf", "tensorflow"},
+                                                                                {"tflite", "tensorflow_lite"},
+                                                                                {"paddle", "paddle"},
+                                                                                {"pytorch", "pytorch"},
+                                                                                {"jax", "jax"}};
         auto it = predefined_frontends.find(framework);
         std::lock_guard<std::mutex> guard(m_loading_mutex);
         if (it != predefined_frontends.end()) {
@@ -79,6 +70,7 @@ public:
         std::lock_guard<std::mutex> guard(m_loading_mutex);
         for (auto& plugin_info : m_plugins) {
             if (!plugin_info.load()) {
+                OPENVINO_DEBUG("Frontend load failed: ", plugin_info.m_file_path, "\n");
                 continue;
             }
             names.push_back(plugin_info.get_creator().m_name);
@@ -113,9 +105,19 @@ public:
         m_plugins.push_back(std::move(plugin_info));
     }
 
+    void register_front_end(const std::string& name, const std::string& library_path) {
+        auto lib_path = ov::util::from_file_path(ov::util::get_plugin_path(library_path));
+        PluginInfo plugin;
+        plugin.m_file_path = lib_path;
+        plugin.m_file_name = ov::util::get_file_name(lib_path);
+        FRONT_END_GENERAL_CHECK(plugin.load(), "Cannot load frontend ", plugin.get_name_from_file());
+        std::lock_guard<std::mutex> guard(m_loading_mutex);
+        m_plugins.push_back(std::move(plugin));
+    }
+
     static void shutdown() {
-        std::lock_guard<std::mutex> guard(m_shared_objects_map_mutex);
-        m_shared_objects_map.clear();
+        std::lock_guard<std::mutex> guard(get_shared_objects_mutex());
+        get_shared_objects_map().clear();
     }
 
 private:
@@ -140,16 +142,20 @@ private:
             {".xml", {"ir", "ir"}},
             {".onnx", {"onnx", "onnx"}},
             {".pb", {"tf", "tensorflow"}},
+            {".pbtxt", {"tf", "tensorflow"}},
+            {".tflite", {"tflite", "tensorflow_lite"}},
             {".pdmodel", {"paddle", "paddle"}},
+            // {".ts", {"pytorch", "pytorch"}},
         };
 
         // List of prioritized frontends.
-        std::list<FrontEndNames> priority_list = {
-            {"ir", "ir"},
-            {"onnx", "onnx"},
-            {"tf", "tensorflow"},
-            {"paddle", "paddle"},
-        };
+        std::list<FrontEndNames> priority_list = {{"ir", "ir"},
+                                                  {"onnx", "onnx"},
+                                                  {"tf", "tensorflow"},
+                                                  {"tflite", "tensorflow_lite"},
+                                                  {"paddle", "paddle"},
+                                                  {"pytorch", "pytorch"},
+                                                  {"jax", "jax"}};
         if (variants.empty()) {
             return nullptr;
         }
@@ -202,29 +208,11 @@ private:
     }
 
     void search_all_plugins() {
-        auto search_from_dir = [&](const std::string& dir) {
-            if (!dir.empty()) {
-                find_plugins(dir, m_plugins);
-            }
-        };
-        std::string env_path = ov::util::getenv_string("OV_FRONTEND_PATH");
-        if (!env_path.empty()) {
-            size_t start = 0;
-            auto sep_pos = env_path.find(PathSeparator, start);
-            while (sep_pos != std::string::npos) {
-                search_from_dir(env_path.substr(start, sep_pos - start));
-                start = sep_pos + 1;
-                sep_pos = env_path.find(PathSeparator, start);
-            }
-            search_from_dir(env_path.substr(start, sep_pos));
-        } else {
-            search_from_dir(get_frontend_library_path());
-        }
+        auto fe_lib_dir = ov::util::get_ov_lib_path();
+        if (!fe_lib_dir.empty())
+            find_plugins(fe_lib_dir, m_plugins);
     }
 };
-
-std::unordered_map<std::string, std::shared_ptr<void>> FrontEndManager::Impl::m_shared_objects_map{};
-std::mutex FrontEndManager::Impl::m_shared_objects_map_mutex{};
 
 FrontEndManager::FrontEndManager() : m_impl(new Impl()) {}
 
@@ -247,6 +235,10 @@ std::vector<std::string> FrontEndManager::get_available_front_ends() {
 
 void FrontEndManager::register_front_end(const std::string& name, FrontEndFactory creator) {
     m_impl->register_front_end(name, std::move(creator));
+}
+
+void FrontEndManager::register_front_end(const std::string& name, const std::string& library_path) {
+    m_impl->register_front_end(name, library_path);
 }
 
 template <>

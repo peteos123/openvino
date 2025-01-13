@@ -1,20 +1,20 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "gtest/gtest.h"
-#include "ngraph/ngraph.hpp"
-#include "ngraph/op/util/attr_types.hpp"
-#include "openvino/opsets/opset9.hpp"
-#include "util/visitor.hpp"
+#include "openvino/op/eye.hpp"
+
+#include <gtest/gtest.h>
+
+#include "openvino/op/constant.hpp"
+#include "visitors/visitors.hpp"
 
 using namespace std;
 using namespace ov;
-using ngraph::test::NodeBuilder;
-using ngraph::test::ValueMap;
+using ov::test::NodeBuilder;
 
 TEST(attributes, eye_op) {
-    NodeBuilder::get_ops().register_factory<op::v9::Eye>();
+    NodeBuilder::opset().insert<op::v9::Eye>();
     auto num_rows = make_shared<op::v0::Constant>(element::i32, Shape{}, 10);
     auto num_columns = make_shared<op::v0::Constant>(element::i32, Shape{}, 2);
     auto diagonal_index = make_shared<op::v0::Constant>(element::i32, Shape{}, 0);
@@ -29,7 +29,7 @@ TEST(attributes, eye_op) {
 }
 
 TEST(attributes, eye_batch_shape_op) {
-    NodeBuilder::get_ops().register_factory<op::v9::Eye>();
+    NodeBuilder::opset().insert<op::v9::Eye>();
     auto num_rows = make_shared<op::v0::Constant>(element::i32, Shape{}, 2);
     auto num_columns = make_shared<op::v0::Constant>(element::i32, Shape{}, 5);
     auto diagonal_index = make_shared<op::v0::Constant>(element::i32, Shape{}, 1);

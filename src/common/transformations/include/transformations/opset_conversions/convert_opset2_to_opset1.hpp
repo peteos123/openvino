@@ -1,12 +1,13 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
 #include <memory>
-#include <openvino/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
+
+#include "openvino/pass/matcher_pass.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 namespace pass {
@@ -18,12 +19,6 @@ class TRANSFORMATIONS_API ConvertOpSet2ToOpSet1;
 
 class ov::pass::ConvertOpSet2ToOpSet1 : public ov::pass::ModelPass {
 public:
-    OPENVINO_RTTI("ConvertOpSet2ToOpSet1", "0");
+    OPENVINO_MODEL_PASS_RTTI("ConvertOpSet2ToOpSet1");
     bool run_on_model(const std::shared_ptr<ov::Model>& m) override;
 };
-
-namespace ngraph {
-namespace pass {
-using ov::pass::ConvertOpSet2ToOpSet1;
-}  // namespace pass
-}  // namespace ngraph

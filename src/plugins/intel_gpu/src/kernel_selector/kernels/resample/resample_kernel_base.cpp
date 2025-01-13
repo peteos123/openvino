@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -90,8 +90,8 @@ ResampleKernelBase::DispatchData ResampleKernelBase::SetDefault(const kernel_sel
     return dispatchData;
 }
 
-bool ResampleKernelBase::Validate(const Params& p, const optional_params& o) const {
-    if (p.GetType() != KernelType::RESAMPLE || o.GetType() != KernelType::RESAMPLE) {
+bool ResampleKernelBase::Validate(const Params& p) const {
+    if (p.GetType() != KernelType::RESAMPLE) {
         return false;
     }
 
@@ -152,11 +152,11 @@ JitConstants ResampleKernelBase::GetJitConstants(const resample_params& params) 
     scales[3] = static_cast<float>(y_size_padded) / static_cast<float>(out_y_size_padded);
     scales[2] = static_cast<float>(z_size_padded) / static_cast<float>(out_z_size_padded);
 
-    for (const auto& it : params.axesAndScales) {
-        int idx = getAxisIndex(it.first);
+    for (std::size_t i = 0; i < params.axes.size(); i++) {
+        int idx = getAxisIndex(params.axes[i]);
         axesUsed[idx] = 1;
         if (params.shapeCalculationMode == kernel_selector::ShapeCalculationMode::SCALES)
-            scales[idx] = 1.f / it.second;
+            scales[idx] = 1.f / params.scales[i];
     }
     for (size_t i = 0; i < scales.size(); ++i) {
         if (scales[i] != 1.f)
@@ -211,11 +211,15 @@ JitConstants ResampleKernelBase::GetJitConstants(const resample_params& params) 
 
     jit.Merge(MakeTypeJitConstants(GetAccumulatorType(params), "ACCUMULATOR"));
 
+    if (output.GetDType() != Datatype::F16 && output.GetDType() != Datatype::F32) {
+        jit.AddConstant(MakeJitConstant("RTE_OUTPUT", 1));
+    }
+
     return jit;
 }
 
-KernelsData ResampleKernelBase::GetCommonKernelsData(const Params& params, const optional_params& options) const {
-    if (!Validate(params, options)) {
+KernelsData ResampleKernelBase::GetCommonKernelsData(const Params& params) const {
+    if (!Validate(params)) {
         return {};
     }
 
@@ -223,7 +227,7 @@ KernelsData ResampleKernelBase::GetCommonKernelsData(const Params& params, const
     resample_params& newParams = *static_cast<resample_params*>(kd.params.get());
 
     auto dispatchData = SetDefault(newParams);
-    auto entry_point = GetEntryPoint(kernelName, newParams.layerID, params, options);
+    auto entry_point = GetEntryPoint(kernelName, newParams.layerID, params);
     auto cldnn_jit = GetJitConstants(newParams);
     auto jit = CreateJit(kernelName, cldnn_jit, entry_point);
 

@@ -1,13 +1,15 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "intel_gpu/plugin/program.hpp"
+#include "intel_gpu/plugin/program_builder.hpp"
 #include "intel_gpu/plugin/common_utils.hpp"
 
-#include "ngraph/op/reshape.hpp"
-#include "ngraph/op/squeeze.hpp"
-#include "ngraph/op/unsqueeze.hpp"
+#include "openvino/op/reshape.hpp"
+#include "openvino/op/squeeze.hpp"
+#include "openvino/op/unsqueeze.hpp"
+#include "openvino/op/constant.hpp"
+#include "openvino/core/validation_util.hpp"
 
 #include "intel_gpu/primitives/reshape.hpp"
 #include "intel_gpu/primitives/reorder.hpp"
@@ -15,7 +17,7 @@
 namespace ov {
 namespace intel_gpu {
 
-static void CreateCommonReshapeOp(Program& p, const std::shared_ptr<ngraph::Node>& op, cldnn::reshape::reshape_mode mode, bool special_zero = false) {
+static void CreateCommonReshapeOp(ProgramBuilder& p, const std::shared_ptr<ov::Node>& op, cldnn::reshape::reshape_mode mode, bool special_zero = false) {
     validate_inputs_count(op, {1, 2});
     auto inputs = p.GetInputInfo(op);
     std::string layerName = layer_type_name_ID(op);
@@ -25,10 +27,15 @@ static void CreateCommonReshapeOp(Program& p, const std::shared_ptr<ngraph::Node
 
     if (p.use_new_shape_infer() || op->is_dynamic()) {
         std::shared_ptr<cldnn::reshape> reshape_prim = nullptr;
-        auto second_const_input = op->get_input_size() == 2 ? std::dynamic_pointer_cast<ngraph::op::v0::Constant>(op->get_input_node_shared_ptr(1)) : nullptr;
+        auto second_const_input = op->get_input_size() == 2 ? std::dynamic_pointer_cast<ov::op::v0::Constant>(op->get_input_node_shared_ptr(1)) : nullptr;
         std::vector<int64_t> output_pattern = {};
         if (second_const_input != nullptr) {
             output_pattern = second_const_input->cast_vector<int64_t>();
+            if (mode == cldnn::reshape::reshape_mode::unsqueeze) {
+                ov::util::try_normalize_axes(output_pattern, op->get_output_partial_shape(0).rank(), *op);
+            } else if (mode == cldnn::reshape::reshape_mode::squeeze) {
+                ov::util::try_normalize_axes(output_pattern, op->get_input_partial_shape(0).rank(), *op);
+            }
         }
 
         // If second input is absent (it's optional in Squeeze op) or it's constant, create reshape with single input and compile time out pattern
@@ -69,9 +76,7 @@ static void CreateCommonReshapeOp(Program& p, const std::shared_ptr<ngraph::Node
             cldnn::layout outputLayout(cldnn::element_type_to_data_type(op->get_output_element_type(0)), outputFormat, outTensor);
             p.add_primitive(*op, cldnn::reorder(reorderId,
                                                 reshape_input,
-                                                outputLayout,
-                                                std::vector<float>(),
-                                                cldnn::reorder_mean_mode::subtract));
+                                                outputLayout));
             reshape_input = cldnn::input_info(reorderId);
         }
 
@@ -84,15 +89,15 @@ static void CreateCommonReshapeOp(Program& p, const std::shared_ptr<ngraph::Node
     }
 }
 
-static void CreateReshapeOp(Program& p, const std::shared_ptr<ngraph::op::v1::Reshape>& op) {
+static void CreateReshapeOp(ProgramBuilder& p, const std::shared_ptr<ov::op::v1::Reshape>& op) {
     CreateCommonReshapeOp(p, op, cldnn::reshape::reshape_mode::base, op->get_special_zero());
 }
 
-static void CreateSqueezeOp(Program& p, const std::shared_ptr<ngraph::op::v0::Squeeze>& op) {
+static void CreateSqueezeOp(ProgramBuilder& p, const std::shared_ptr<ov::op::v0::Squeeze>& op) {
     CreateCommonReshapeOp(p, op, cldnn::reshape::reshape_mode::squeeze);
 }
 
-static void CreateUnsqueezeOp(Program& p, const std::shared_ptr<ngraph::op::v0::Unsqueeze>& op) {
+static void CreateUnsqueezeOp(ProgramBuilder& p, const std::shared_ptr<ov::op::v0::Unsqueeze>& op) {
     CreateCommonReshapeOp(p, op, cldnn::reshape::reshape_mode::unsqueeze);
 }
 

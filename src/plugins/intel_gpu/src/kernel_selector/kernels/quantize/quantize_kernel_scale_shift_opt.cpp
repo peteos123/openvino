@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -28,17 +28,18 @@ ParamsKey QuantizeKernelScaleShift::GetSupportedKey() const {
     k.EnableBatching();
     k.EnableDifferentTypes();
     k.EnableQuantizeScaleShiftOpt();
+    k.EnableDynamicShapesSupport();
     return k;
 }
 
-CommonDispatchData QuantizeKernelScaleShift::SetDefault(const quantize_params& params, const optional_params&) const {
+CommonDispatchData QuantizeKernelScaleShift::SetDefault(const quantize_params& params) const {
     CommonDispatchData dispatchData;
 
     auto output = params.outputs[0];
 
     if (output.GetLayout() == DataLayout::b_fs_yx_fsv16 || output.GetLayout() == DataLayout::b_fs_yx_fsv32 ||
         output.GetLayout() == DataLayout::b_fs_zyx_fsv32) {
-        dispatchData.gws[0] = output.Z().v *output.Y().v * output.X().v;
+        dispatchData.gws[0] = output.Z().v * output.Y().v * output.X().v;
         dispatchData.gws[1] = Align(output.Feature().v, sub_group_size);
         dispatchData.gws[2] = output.Batch().v;
 
@@ -113,7 +114,7 @@ JitConstants QuantizeKernelScaleShift::GetJitConstants(const quantize_params& pa
     return jit;
 }
 
-bool QuantizeKernelScaleShift::Validate(const Params& p, const optional_params&) const {
+bool QuantizeKernelScaleShift::Validate(const Params& p) const {
     const quantize_params& params = static_cast<const quantize_params&>(p);
     if (params.inputs.size() != 9)
         return false;
@@ -121,7 +122,7 @@ bool QuantizeKernelScaleShift::Validate(const Params& p, const optional_params&)
     return true;
 }
 
-KernelsPriority QuantizeKernelScaleShift::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority QuantizeKernelScaleShift::GetKernelsPriority(const Params& /*params*/) const {
     return DONT_USE_IF_HAVE_SOMETHING_ELSE;
 }
 }  // namespace kernel_selector

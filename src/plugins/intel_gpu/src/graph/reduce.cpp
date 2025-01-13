@@ -1,13 +1,11 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "reduce_inst.h"
 
 #include "primitive_type_base.h"
-#include "intel_gpu/runtime/error_handler.hpp"
 #include "json_object.h"
-#include "data_inst.h"
 #include <vector>
 #include <string>
 
@@ -27,7 +25,7 @@ static std::vector<uint16_t> convert_axes(std::vector<int64_t> axes, size_t rank
         if (axis < 0)
             axis = axis + rank;
 
-        converted_axes.push_back(rank + 1 - axis);
+        converted_axes.push_back(static_cast<uint16_t>(rank + 1 - axis));
     }
 
     return converted_axes;
@@ -75,16 +73,19 @@ layout reduce_inst::calc_output_layout(reduce_node const& node, kernel_impl_para
     }
 
     std::vector<reduce_mode> reduce_bool_modes = {reduce_mode::logical_and, reduce_mode::logical_or};
-    if (std::find(reduce_bool_modes.begin(), reduce_bool_modes.end(), mode) != reduce_bool_modes.end())
+    if (std::find(reduce_bool_modes.begin(), reduce_bool_modes.end(), mode) != reduce_bool_modes.end()) {
         output_type = data_types::i8;
-    else if (output_type == data_types::i8 || output_type == data_types::u8)
-        output_type = data_types::f32;
+    } else if (output_type == data_types::i8 || output_type == data_types::u8) {
+        if (mode != reduce_mode::min && mode != reduce_mode::max) {
+            output_type = data_types::f32;
+        }
+    }
 
     if (desc->output_data_types[0])
         output_type = *desc->output_data_types[0];
 
     if (impl_param.has_fused_primitives())
-        output_type = impl_param.get_fused_output_layout().data_type;
+        output_type = impl_param.get_output_element_type();
 
     if (format_dim == 6)
         return layout{output_type, input_format, tensor(batch(in_dims[0]), feature(in_dims[1]), spatial(in_dims[2], in_dims[3], in_dims[4], in_dims[5]))};
@@ -109,8 +110,9 @@ std::vector<layout> reduce_inst::calc_output_layouts(reduce_node const& /*node*/
     std::vector<ShapeType> output_shapes = {ShapeType()};
 
     auto axes = desc->axes;
-    auto axes_tensor = std::make_shared<ngraph::runtime::HostTensor>(ov::element::i64, ov::Shape{axes.size()}, axes.data());
-    std::map<size_t, std::shared_ptr<ngraph::runtime::HostTensor>> const_data = {{1, axes_tensor}};
+    auto axes_tensor = ov::Tensor(ov::element::i64, ov::Shape{axes.size()}, axes.data());
+    std::unordered_map<size_t, ov::Tensor> const_data = {{1, axes_tensor}};
+    auto ta = ov::make_tensor_accessor(const_data);
 
     // shape infer by mode
     auto mode = desc->mode;
@@ -120,63 +122,63 @@ std::vector<layout> reduce_inst::calc_output_layouts(reduce_node const& /*node*/
         {
             ov::op::v1::ReduceMax op;
             op.set_keep_dims(keep_dims);
-            shape_infer(&op, input_shapes, output_shapes, const_data);
+            output_shapes = shape_infer(&op, input_shapes, ta);
             break;
         }
         case reduce_mode::min:
         {
             ov::op::v1::ReduceMin op;
             op.set_keep_dims(keep_dims);
-            shape_infer(&op, input_shapes, output_shapes, const_data);
+            output_shapes = shape_infer(&op, input_shapes, ta);
             break;
         }
         case reduce_mode::mean:
         {
             ov::op::v1::ReduceMean op;
             op.set_keep_dims(keep_dims);
-            shape_infer(&op, input_shapes, output_shapes, const_data);
+            output_shapes = shape_infer(&op, input_shapes, ta);
             break;
         }
         case reduce_mode::prod:
         {
             ov::op::v1::ReduceProd op;
             op.set_keep_dims(keep_dims);
-            shape_infer(&op, input_shapes, output_shapes, const_data);
+            output_shapes = shape_infer(&op, input_shapes, ta);
             break;
         }
         case reduce_mode::sum:
         {
             ov::op::v1::ReduceSum op;
             op.set_keep_dims(keep_dims);
-            shape_infer(&op, input_shapes, output_shapes, const_data);
+            output_shapes = shape_infer(&op, input_shapes, ta);
             break;
         }
         case reduce_mode::logical_and:
             {
             ov::op::v1::ReduceLogicalAnd op;
             op.set_keep_dims(keep_dims);
-            shape_infer(&op, input_shapes, output_shapes, const_data);
+            output_shapes = shape_infer(&op, input_shapes, ta);
             break;
         }
         case reduce_mode::logical_or:
         {
             ov::op::v1::ReduceLogicalOr op;
             op.set_keep_dims(keep_dims);
-            shape_infer(&op, input_shapes, output_shapes, const_data);
+            output_shapes = shape_infer(&op, input_shapes, ta);
             break;
         }
         case reduce_mode::l1:
         {
             ov::op::v4::ReduceL1 op;
             op.set_keep_dims(keep_dims);
-            shape_infer(&op, input_shapes, output_shapes, const_data);
+            output_shapes = shape_infer(&op, input_shapes, ta);
             break;
         }
         case reduce_mode::l2:
         {
             ov::op::v4::ReduceL2 op;
             op.set_keep_dims(keep_dims);
-            shape_infer(&op, input_shapes, output_shapes, const_data);
+            output_shapes = shape_infer(&op, input_shapes, ta);
             break;
         }
         case reduce_mode::sum_square:
@@ -200,7 +202,7 @@ std::vector<layout> reduce_inst::calc_output_layouts(reduce_node const& /*node*/
     output_type = desc->output_data_types[0].value_or(output_type);
 
     if (impl_param.has_fused_primitives())
-        output_type = impl_param.get_fused_output_layout().data_type;
+        output_type = impl_param.get_output_element_type();
 
     auto output_format = format::adjust_to_rank(input0_layout.format, output_shapes[0].size());
 

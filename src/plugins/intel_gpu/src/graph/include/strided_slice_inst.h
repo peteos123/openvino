@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -6,7 +6,6 @@
 
 #include "intel_gpu/primitives/strided_slice.hpp"
 #include "primitive_inst.h"
-#include "intel_gpu/runtime/error_handler.hpp"
 
 #include <string>
 #include <vector>
@@ -16,6 +15,9 @@ namespace cldnn {
 template <>
 struct typed_program_node<strided_slice> : public typed_program_node_base<strided_slice> {
     using parent = typed_program_node_base<strided_slice>;
+    typed_program_node(const std::shared_ptr<strided_slice> prim, program& prog) : parent(prim, prog) {
+        support_padding_all(true);
+    }
 
 public:
     using parent::parent;
@@ -38,6 +40,11 @@ public:
     static std::string to_string(strided_slice_node const& node);
 
     typed_primitive_inst(network& network, strided_slice_node const& desc);
+
+    void update_output_memory() override;
+
+private:
+    void on_execute() override;
 };
 
 using strided_slice_inst = typed_primitive_inst<strided_slice>;

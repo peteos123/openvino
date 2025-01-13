@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
-import openvino.runtime.opset8 as ov
-from openvino.runtime.exceptions import UserInputError
-from openvino.runtime.utils.node_factory import NodeFactory
+import pytest
+from sys import platform
+from openvino import compile_model, Model
+from openvino import Extension
+import openvino.opset8 as ov
+from openvino.exceptions import UserInputError
+from openvino.utils.node_factory import NodeFactory
 
 
 def test_node_factory_add():
@@ -74,7 +78,8 @@ def test_node_factory_empty_topk_with_args_and_attrs():
     node.set_attribute("axis", 1)
     node.set_attribute("mode", "max")
     node.set_attribute("sort", "value")
-    node.validate()
+
+    node.constructor_validate_and_infer_types()
 
     assert node.get_type_name() == "TopK"
     assert node.get_output_size() == 2
@@ -92,3 +97,45 @@ def test_node_factory_validate_missing_arguments():
         pass
     else:
         raise AssertionError("Validation of missing arguments has unexpectedly passed.")
+
+
+@pytest.mark.template_extension
+@pytest.mark.dynamic_library
+@pytest.mark.xfail(condition=platform == "darwin", reason="Ticket - 132696")
+def test_extension_added_from_library():
+    if platform == "win32":
+        library_path = "openvino_template_extension.dll"
+    else:
+        library_path = "libopenvino_template_extension.so"
+
+    factory = NodeFactory()
+    factory.add_extension(library_path)
+
+    data = ov.parameter([1, 2], dtype=np.float32)
+    identity = factory.create("Identity", data.outputs())
+    model = Model([identity], [data])
+    compiled = compile_model(model)
+    tensor = np.array([[3, 4]], dtype=np.float32)
+    result = compiled(tensor)
+
+    # TODO: There is an issue with life time of objects, free resources explicitly
+    # otherwise segfault will occur. Workaround: create factory as a global variable.
+    del compiled
+    del model
+    del identity
+
+    assert np.array_equal(tensor, result[0])
+
+
+def test_add_extension():
+    class EmptyExtension(Extension):
+        def __init__(self) -> None:
+            super().__init__()
+
+    factory = NodeFactory()
+    factory.add_extension(EmptyExtension())
+    factory.add_extension([EmptyExtension(), EmptyExtension()])
+
+    data = ov.parameter([1, 2], dtype=np.float32)
+    param = factory.create("Parameter", data.outputs())
+    assert param is not None

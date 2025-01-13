@@ -1,22 +1,21 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include <cmath>
-
-#include <ngraph/opsets/opset5.hpp>
-#include "ie_parallel.hpp"
 #include "log_softmax.h"
 
-using namespace InferenceEngine;
+#include <cmath>
+#include <openvino/opsets/opset5.hpp>
+
+#include "openvino/core/parallel.hpp"
 
 namespace ov {
 namespace intel_cpu {
 namespace node {
 
-bool LogSoftmax::isSupportedOperation(const std::shared_ptr<const ngraph::Node>& op, std::string& errorMessage) noexcept {
+bool LogSoftmax::isSupportedOperation(const std::shared_ptr<const ov::Node>& op, std::string& errorMessage) noexcept {
     try {
-        const auto logSoftMax = std::dynamic_pointer_cast<const ngraph::opset5::LogSoftmax>(op);
+        const auto logSoftMax = ov::as_type_ptr<const ov::opset5::LogSoftmax>(op);
         if (!logSoftMax) {
             errorMessage = "Only opset5 LogSoftmax operation is supported";
             return false;
@@ -27,21 +26,22 @@ bool LogSoftmax::isSupportedOperation(const std::shared_ptr<const ngraph::Node>&
     return true;
 }
 
-LogSoftmax::LogSoftmax(const std::shared_ptr<ngraph::Node>& op, const GraphContext::CPtr context)
-    : Node(op, context, NgraphShapeInferFactory(op, EMPTY_PORT_MASK)) {
+LogSoftmax::LogSoftmax(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr context)
+    : Node(op, context, NgraphShapeInferFactory(op)) {
     std::string errorMessage;
     if (!isSupportedOperation(op, errorMessage)) {
-        IE_THROW(NotImplemented) << errorMessage;
+        OPENVINO_THROW_NOT_IMPLEMENTED(errorMessage);
     }
 
     errorPrefix = "LogSoftmax layer with name '" + op->get_friendly_name() + "'";
-    const auto logSoftMax = std::dynamic_pointer_cast<const ngraph::opset5::LogSoftmax>(op);
+    const auto logSoftMax = ov::as_type_ptr<const ov::opset5::LogSoftmax>(op);
     if (logSoftMax == nullptr)
-        IE_THROW() << "Operation with name '" << op->get_friendly_name() <<
-            "' is not an instance of LogSoftmax from opset5.";
+        OPENVINO_THROW("Operation with name '",
+                       op->get_friendly_name(),
+                       "' is not an instance of LogSoftmax from opset5.");
 
     if (inputShapes.size() != 1 || outputShapes.size() != 1)
-        IE_THROW() << errorPrefix << " has incorrect number of input/output edges!";
+        OPENVINO_THROW(errorPrefix, " has incorrect number of input/output edges!");
 
     auto dimsSize = getInputShapeAtPort(0).getDims().size();
     if (dimsSize == 0)
@@ -51,29 +51,31 @@ LogSoftmax::LogSoftmax(const std::shared_ptr<ngraph::Node>& op, const GraphConte
         axis += dimsSize;
 
     if (dimsSize < static_cast<size_t>((size_t)(1) + axis))
-        IE_THROW() << errorPrefix << " has incorrect input parameters dimensions and axis number!";
+        OPENVINO_THROW(errorPrefix, " has incorrect input parameters dimensions and axis number!");
 }
 
 void LogSoftmax::initSupportedPrimitiveDescriptors() {
     if (!supportedPrimitiveDescriptors.empty())
         return;
 
-    addSupportedPrimDesc({{LayoutType::ncsp, Precision::FP32}},
-                         {{LayoutType::ncsp, Precision::FP32}},
+    addSupportedPrimDesc({{LayoutType::ncsp, ov::element::f32}},
+                         {{LayoutType::ncsp, ov::element::f32}},
                          impl_desc_type::ref_any);
 }
 
 void LogSoftmax::prepareParams() {
-    const auto &dims = getParentEdgesAtPort(0)[0]->getMemory().getStaticDims();
+    const auto& dims = getParentEdgeAt(0)->getMemory().getStaticDims();
     reducedAxisStride = 1;
     axisStep = 1;
     isLastDim = false;
 
     int j = static_cast<int>(dims.size()) - 1;
     for (; j >= 0; j--) {
-        if (dims[j] != 1) break;
+        if (dims[j] != 1)
+            break;
     }
-    if (j == axis) isLastDim = true;
+    if (j == axis)
+        isLastDim = true;
 
     for (int i = 0; i < axis; i++)
         axisStep *= dims[i];
@@ -87,13 +89,13 @@ void LogSoftmax::executeDynamicImpl(dnnl::stream strm) {
 }
 
 void LogSoftmax::execute(dnnl::stream strm) {
-    const float *srcData = reinterpret_cast<const float *>(getParentEdgeAt(0)->getMemoryPtr()->GetPtr());
-    float* dstData = reinterpret_cast<float *>(getChildEdgesAtPort(0)[0]->getMemoryPtr()->GetPtr());
+    const float* srcData = getSrcDataAtPortAs<const float>(0);
+    float* dstData = getDstDataAtPortAs<float>(0);
 
     if (isLastDim) {
         parallel_for(axisStep, [&](size_t i) {
-            const float *srcDataPtr = &srcData[i * reducedAxisSize];
-            float *dstDataPtr = &dstData[i * reducedAxisSize];
+            const float* srcDataPtr = &srcData[i * reducedAxisSize];
+            float* dstDataPtr = &dstData[i * reducedAxisSize];
 
             float reduceProd = 0.0f;
             const float max = *std::max_element(srcDataPtr, srcDataPtr + reducedAxisSize);
@@ -106,8 +108,8 @@ void LogSoftmax::execute(dnnl::stream strm) {
         });
     } else {
         parallel_for2d(axisStep, reducedAxisStride, [&](size_t k, size_t i) {
-            const float *srcDataPtr = &srcData[k * reducedAxisStride * reducedAxisSize + i];
-            float *dstDataPtr = &dstData[k * reducedAxisStride * reducedAxisSize + i];
+            const float* srcDataPtr = &srcData[k * reducedAxisStride * reducedAxisSize + i];
+            float* dstDataPtr = &dstData[k * reducedAxisStride * reducedAxisSize + i];
 
             float reduceProd = 0.0f;
             float max = std::numeric_limits<float>::min();
@@ -130,6 +132,6 @@ bool LogSoftmax::created() const {
     return getType() == Type::LogSoftmax;
 }
 
-}   // namespace node
-}   // namespace intel_cpu
-}   // namespace ov
+}  // namespace node
+}  // namespace intel_cpu
+}  // namespace ov

@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -16,7 +16,10 @@
 #endif
 
 __attribute__((reqd_work_group_size(LOCAL_SIZE, 1, 1)))
-KERNEL(arg_max_gpu_top_k)(const __global INPUT0_TYPE* input, __global OUTPUT_TYPE* output)
+KERNEL(arg_max_gpu_top_k)(
+    OPTIONAL_SHAPE_INFO_ARG
+    const __global INPUT0_TYPE* input,
+    __global OUTPUT_TYPE* output)
 {
 #include "include/arg_max_min_common.cl"
     uint results[TOP_K];

@@ -1,11 +1,11 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <openvino/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
+#include "openvino/pass/matcher_pass.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 namespace pass {
@@ -17,12 +17,6 @@ class TRANSFORMATIONS_API ConvertMulticlassNmsToMulticlassNmsIE;
 
 class ov::pass::ConvertMulticlassNmsToMulticlassNmsIE : public ov::pass::MatcherPass {
 public:
-    OPENVINO_RTTI("public", "0");
+    OPENVINO_MATCHER_PASS_RTTI("ConvertMulticlassNmsToMulticlassNmsIE");
     ConvertMulticlassNmsToMulticlassNmsIE(bool force_i32_output_type = true);
 };
-
-namespace ngraph {
-namespace pass {
-using ov::pass::ConvertMulticlassNmsToMulticlassNmsIE;
-}  // namespace pass
-}  // namespace ngraph

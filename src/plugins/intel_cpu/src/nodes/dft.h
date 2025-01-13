@@ -1,14 +1,11 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <ie_common.h>
-#include <node.h>
-#include <string>
-
-#include "kernels/dft_uni_kernel.hpp"
+#include "kernels/x64/dft_uni_kernel.hpp"
+#include "node.h"
 
 namespace ov {
 namespace intel_cpu {
@@ -16,7 +13,7 @@ namespace node {
 
 class DFT : public Node {
 public:
-    DFT(const std::shared_ptr<ngraph::Node>& op, const GraphContext::CPtr context);
+    DFT(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr context);
     ~DFT() override = default;
 
     void getSupportedDescriptors() override;
@@ -26,12 +23,11 @@ public:
 
     void prepareParams() override;
 
-    static bool isSupportedOperation(const std::shared_ptr<const ngraph::Node>& op, std::string& errorMessage) noexcept;
+    static bool isSupportedOperation(const std::shared_ptr<const ov::Node>& op, std::string& errorMessage) noexcept;
 
 private:
     std::vector<int32_t> getAxes() const;
     void createJITKernels(bool hasDFT, bool hasFFT);
-
     void dftNd(float* output,
                const VectorDims& outputShape,
                const VectorDims& outputStrides,
@@ -67,6 +63,6 @@ private:
     bool lastInverse;
 };
 
-}   // namespace node
-}   // namespace intel_cpu
-}   // namespace ov
+}  // namespace node
+}  // namespace intel_cpu
+}  // namespace ov

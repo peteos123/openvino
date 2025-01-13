@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -7,47 +7,279 @@
 ///
 
 #pragma once
+
+#include <array>
+
+#ifdef OV_GPU_USE_OPENCL_HPP
 #include <CL/opencl.hpp>
+#else
+#include <CL/cl2.hpp>
+#endif
+
+#ifndef CL_HPP_PARAM_NAME_CL_INTEL_UNIFIED_SHARED_MEMORY_
+#define OPENVINO_CLHPP_HEADERS_ARE_OLDER_THAN_V2024_10_24
+#endif
+
 #include <CL/cl_ext.h>
-#define NOMINMAX
+
 #ifdef _WIN32
-#include <CL/cl_d3d11.h>
+# ifndef NOMINMAX
+#  define NOMINMAX
+# endif
+# include <CL/cl_d3d11.h>
 typedef cl_d3d11_device_source_khr cl_device_source_intel;
 typedef cl_d3d11_device_set_khr    cl_device_set_intel;
 #else
-#include <CL/cl_va_api_media_sharing_intel.h>
+# include <CL/cl_va_api_media_sharing_intel.h>
 typedef cl_va_api_device_source_intel cl_device_source_intel;
 typedef cl_va_api_device_set_intel    cl_device_set_intel;
 #endif
 
+#include <sstream>
+
+/********************************************
+* cl_intel_required_subgroup_size extension *
+*********************************************/
+
+#if !defined(cl_intel_required_subgroup_size)
+#define cl_intel_required_subgroup_size 1
+
 // cl_intel_required_subgroup_size
 #define CL_DEVICE_SUB_GROUP_SIZES_INTEL           0x4108
 
-// cl_intel_device_attribute_query
-#define CL_DEVICE_IP_VERSION_INTEL                0x4250
-#define CL_DEVICE_ID_INTEL                        0x4251
-#define CL_DEVICE_NUM_SLICES_INTEL                0x4252
-#define CL_DEVICE_NUM_SUB_SLICES_PER_SLICE_INTEL  0x4253
-#define CL_DEVICE_NUM_EUS_PER_SUB_SLICE_INTEL     0x4254
-#define CL_DEVICE_NUM_THREADS_PER_EU_INTEL        0x4255
-#define CL_DEVICE_FEATURE_CAPABILITIES_INTEL      0x4256
+#endif // cl_intel_required_subgroup_size
+
+#ifdef OPENVINO_CLHPP_HEADERS_ARE_OLDER_THAN_V2024_10_24
+
+namespace cl {
+namespace detail {
+CL_HPP_DECLARE_PARAM_TRAITS_(cl_device_info, CL_DEVICE_SUB_GROUP_SIZES_INTEL, cl::vector<size_type>)
+}  // namespace detail
+}  // namespace cl
+
+#endif // OPENVINO_CLHPP_HEADERS_ARE_OLDER_THAN_V2024_10_24
+
+/***************************************************************
+* cl_intel_command_queue_families
+***************************************************************/
+
+#if !defined(cl_intel_command_queue_families)
+#define cl_intel_command_queue_families 1
+
+typedef cl_bitfield         cl_command_queue_capabilities_intel;
+
+#define CL_QUEUE_FAMILY_MAX_NAME_SIZE_INTEL                 64
+
+typedef struct _cl_queue_family_properties_intel {
+    cl_command_queue_properties properties;
+    cl_command_queue_capabilities_intel capabilities;
+    cl_uint count;
+    char name[CL_QUEUE_FAMILY_MAX_NAME_SIZE_INTEL];
+} cl_queue_family_properties_intel;
+
+/* cl_device_info */
+#define CL_DEVICE_QUEUE_FAMILY_PROPERTIES_INTEL             0x418B
+
+/* cl_queue_properties */
+#define CL_QUEUE_FAMILY_INTEL                               0x418C
+#define CL_QUEUE_INDEX_INTEL                                0x418D
+
+/* cl_command_queue_capabilities_intel */
+#define CL_QUEUE_DEFAULT_CAPABILITIES_INTEL                 0
+
+#endif  // cl_intel_command_queue_families
+
+/*******************************************
+* cl_intel_unified_shared_memory extension *
+********************************************/
+
+#if !defined(cl_intel_unified_shared_memory)
+#define cl_intel_unified_shared_memory 1
+
+/* cl_mem_alloc_info_intel */
+#define CL_MEM_ALLOC_TYPE_INTEL         0x419A
+#define CL_MEM_ALLOC_SIZE_INTEL         0x419C
+
+/* cl_unified_shared_memory_type_intel */
+#define CL_MEM_TYPE_UNKNOWN_INTEL       0x4196
+#define CL_MEM_TYPE_HOST_INTEL          0x4197
+#define CL_MEM_TYPE_DEVICE_INTEL        0x4198
+#define CL_MEM_TYPE_SHARED_INTEL        0x4199
+
+/* cl_device_info */
+#define CL_DEVICE_HOST_MEM_CAPABILITIES_INTEL                   0x4190
+#define CL_DEVICE_DEVICE_MEM_CAPABILITIES_INTEL                 0x4191
+#define CL_DEVICE_SINGLE_DEVICE_SHARED_MEM_CAPABILITIES_INTEL   0x4192
+
+/* cl_device_unified_shared_memory_capabilities_intel - bitfield */
+#define CL_UNIFIED_SHARED_MEMORY_ACCESS_INTEL                   (1 << 0)
+
+typedef cl_ulong            cl_properties;
+typedef cl_properties cl_mem_properties_intel;
+typedef cl_uint cl_mem_info_intel;
+typedef cl_uint cl_unified_shared_memory_type_intel;
+typedef cl_bitfield cl_device_unified_shared_memory_capabilities_intel;
+
+typedef cl_int (CL_API_CALL *
+clMemFreeINTEL_fn)(
+            cl_context context,
+            void* ptr);
+
+typedef cl_int (CL_API_CALL *
+clSetKernelArgMemPointerINTEL_fn)(
+            cl_kernel kernel,
+            cl_uint arg_index,
+            const void* arg_value);
+
+typedef cl_int (CL_API_CALL *
+clEnqueueMemcpyINTEL_fn)(
+            cl_command_queue command_queue,
+            cl_bool blocking,
+            void* dst_ptr,
+            const void* src_ptr,
+            size_t size,
+            cl_uint num_events_in_wait_list,
+            const cl_event* event_wait_list,
+            cl_event* event);
+
+typedef void* (CL_API_CALL *
+clHostMemAllocINTEL_fn)(
+            cl_context context,
+            const cl_mem_properties_intel* properties,
+            size_t size,
+            cl_uint alignment,
+            cl_int* errcode_ret);
+
+typedef void* (CL_API_CALL *
+clSharedMemAllocINTEL_fn)(
+            cl_context context,
+            cl_device_id device,
+            const cl_mem_properties_intel* properties,
+            size_t size,
+            cl_uint alignment,
+            cl_int* errcode_ret);
+
+typedef void* (CL_API_CALL *
+clDeviceMemAllocINTEL_fn)(
+            cl_context context,
+            cl_device_id device,
+            const cl_mem_properties_intel* properties,
+            size_t size,
+            cl_uint alignment,
+            cl_int* errcode_ret);
+
+typedef cl_int (CL_API_CALL *
+clGetMemAllocInfoINTEL_fn)(
+            cl_context context,
+            const void* ptr,
+            cl_mem_info_intel param_name,
+            size_t param_value_size,
+            void* param_value,
+            size_t* param_value_size_ret);
+
+typedef cl_int (CL_API_CALL *
+clEnqueueMemsetINTEL_fn)(   /* Deprecated */
+            cl_command_queue command_queue,
+            void* dst_ptr,
+            cl_int value,
+            size_t size,
+            cl_uint num_events_in_wait_list,
+            const cl_event* event_wait_list,
+            cl_event* event);
+
+typedef cl_int (CL_API_CALL *
+clEnqueueMemFillINTEL_fn)(
+            cl_command_queue command_queue,
+            void* dst_ptr,
+            const void* pattern,
+            size_t pattern_size,
+            size_t size,
+            cl_uint num_events_in_wait_list,
+            const cl_event* event_wait_list,
+            cl_event* event);
+
+#endif // cl_intel_unified_shared_memory
+
+/********************************
+* cl_intel_planar_yuv extension *
+*********************************/
+
+#if !defined(CL_NV12_INTEL)
+#define CL_NV12_INTEL                                       0x410E
+#endif // CL_NV12_INTEL
+
+#if !defined(CL_MEM_ACCESS_FLAGS_UNRESTRICTED_INTEL)
+#define CL_MEM_ACCESS_FLAGS_UNRESTRICTED_INTEL              (1 << 25)
+#endif // CL_MEM_ACCESS_FLAGS_UNRESTRICTED_INTEL
+
+/*********************************
+* cl_khr_device_uuid extension
+*********************************/
+
+#if !defined(cl_khr_device_uuid)
+#define cl_khr_device_uuid 1
+
+#define CL_UUID_SIZE_KHR 16
+#define CL_LUID_SIZE_KHR 8
+
+#define CL_DEVICE_UUID_KHR          0x106A
+#define CL_DEVICE_LUID_KHR          0x106D
+
+#endif // cl_khr_device_uuid
+
+// some versions of CL/opencl.hpp don't define C++ wrapper for CL_DEVICE_UUID_KHR
+// we are checking it in cmake and defined macro OV_GPU_OPENCL_HPP_HAS_UUID if it is defined
+#ifndef OV_GPU_OPENCL_HPP_HAS_UUID
+
+// for C++ wrappers
+using uuid_array = std::array<cl_uchar, CL_UUID_SIZE_KHR>;
+using luid_array = std::array<cl_uchar, CL_LUID_SIZE_KHR>;
+
+namespace cl {
+namespace detail {
+CL_HPP_DECLARE_PARAM_TRAITS_(cl_device_info, CL_DEVICE_UUID_KHR, uuid_array)
+CL_HPP_DECLARE_PARAM_TRAITS_(cl_device_info, CL_DEVICE_LUID_KHR, luid_array)
+}  // namespace detail
+}  // namespace cl
+
+#endif // OV_GPU_OPENCL_HPP_HAS_UUID
+
+/***************************************************************
+* cl_intel_device_attribute_query
+***************************************************************/
+
+#if !defined(cl_intel_device_attribute_query)
+#define cl_intel_device_attribute_query 1
 
 typedef cl_bitfield         cl_device_feature_capabilities_intel;
 
-/* For GPU devices, version 1.0.0: */
+/* cl_device_feature_capabilities_intel */
+#define CL_DEVICE_FEATURE_FLAG_DP4A_INTEL                   (1 << 0)
+#define CL_DEVICE_FEATURE_FLAG_DPAS_INTEL                   (1 << 1)
 
-#define CL_DEVICE_FEATURE_FLAG_DP4A_INTEL         (1 << 0)
-#define CL_DEVICE_FEATURE_FLAG_DPAS_INTEL         (1 << 1)
+/* cl_device_info */
+#define CL_DEVICE_IP_VERSION_INTEL                          0x4250
+#define CL_DEVICE_ID_INTEL                                  0x4251
+#define CL_DEVICE_NUM_SLICES_INTEL                          0x4252
+#define CL_DEVICE_NUM_SUB_SLICES_PER_SLICE_INTEL            0x4253
+#define CL_DEVICE_NUM_EUS_PER_SUB_SLICE_INTEL               0x4254
+#define CL_DEVICE_NUM_THREADS_PER_EU_INTEL                  0x4255
+#define CL_DEVICE_FEATURE_CAPABILITIES_INTEL                0x4256
 
+#endif // cl_intel_device_attribute_query
+
+#ifndef CL_HPP_PARAM_NAME_CL_INTEL_COMMAND_QUEUE_FAMILIES_
 #define CL_HPP_PARAM_NAME_CL_INTEL_COMMAND_QUEUE_FAMILIES_(F) \
     F(cl_device_info, CL_DEVICE_QUEUE_FAMILY_PROPERTIES_INTEL, cl::vector<cl_queue_family_properties_intel>) \
     \
     F(cl_command_queue_info, CL_QUEUE_FAMILY_INTEL, cl_uint) \
     F(cl_command_queue_info, CL_QUEUE_INDEX_INTEL, cl_uint)
+#endif // CL_HPP_PARAM_NAME_CL_INTEL_COMMAND_QUEUE_FAMILIES_
+
+#ifdef OPENVINO_CLHPP_HEADERS_ARE_OLDER_THAN_V2024_10_24
 
 namespace cl {
 namespace detail {
-CL_HPP_DECLARE_PARAM_TRAITS_(cl_device_info, CL_DEVICE_SUB_GROUP_SIZES_INTEL, vector<size_type>)
 CL_HPP_DECLARE_PARAM_TRAITS_(cl_device_info, CL_DEVICE_IP_VERSION_INTEL, cl_uint)
 CL_HPP_DECLARE_PARAM_TRAITS_(cl_device_info, CL_DEVICE_ID_INTEL, cl_uint)
 CL_HPP_DECLARE_PARAM_TRAITS_(cl_device_info, CL_DEVICE_NUM_SLICES_INTEL, cl_uint)
@@ -58,6 +290,8 @@ CL_HPP_DECLARE_PARAM_TRAITS_(cl_device_info, CL_DEVICE_FEATURE_CAPABILITIES_INTE
 CL_HPP_PARAM_NAME_CL_INTEL_COMMAND_QUEUE_FAMILIES_(CL_HPP_DECLARE_PARAM_TRAITS_)
 }  // namespace detail
 }  // namespace cl
+
+#endif // OPENVINO_CLHPP_HEADERS_ARE_OLDER_THAN_V2024_10_24
 
 #include <memory>
 
@@ -707,23 +941,23 @@ public:
 
     void allocateHost(size_t size) {
         cl_int error = CL_SUCCESS;
-        _allocate(_usmHelper.allocate_host(nullptr, size, 0, &error));
-        if (error != CL_SUCCESS)
-            detail::errHandler(error, "[CL_EXT] UsmHost in cl extensions constructor failed");
+        auto ptr = _usmHelper.allocate_host(nullptr, size, 0, &error);
+        _check_error(size, ptr, error, "Host");
+        _allocate(ptr);
     }
 
     void allocateShared(size_t size) {
         cl_int error = CL_SUCCESS;
-        _allocate(_usmHelper.allocate_shared(nullptr, size, 0, &error));
-        if (error != CL_SUCCESS)
-            detail::errHandler(error, "[CL_EXT] UsmShared in cl extensions constructor failed");
+        auto ptr = _usmHelper.allocate_shared(nullptr, size, 0, &error);
+        _check_error(size, ptr, error, "Shared");
+        _allocate(ptr);
     }
 
     void allocateDevice(size_t size) {
         cl_int error = CL_SUCCESS;
-        _allocate(_usmHelper.allocate_device(nullptr, size, 0, &error));
-        if (error != CL_SUCCESS)
-            detail::errHandler(error, "[CL_EXT] UsmDevice in cl extensions constructor failed");
+        auto ptr = _usmHelper.allocate_device(nullptr, size, 0, &error);
+        _check_error(size, ptr, error, "Device");
+        _allocate(ptr);
     }
 
     void freeMem() {
@@ -740,9 +974,18 @@ protected:
 
 private:
     void _allocate(void* ptr) {
-        if (!ptr)
-            throw std::runtime_error("[CL ext] Can not allocate nullptr for USM type.");
         _usm_pointer = std::make_shared<UsmHolder>(_usmHelper, ptr);
+    }
+
+    void _check_error(size_t size, void* ptr, cl_int error, const char* usm_type) {
+        if (ptr == nullptr || error != CL_SUCCESS) {
+            std::stringstream sout;
+            sout << "[CL ext] Can not allocate " << size << " bytes for USM " << usm_type << ". ptr: " << ptr << ", error: " << error << std::endl;
+            if (ptr == nullptr)
+                throw std::runtime_error(sout.str());
+            else
+                detail::errHandler(error, sout.str().c_str());
+        }
     }
 };
 

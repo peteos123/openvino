@@ -1,9 +1,16 @@
 #!/bin/bash
 
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
-SCRIPT_DIR="$( cd "$( dirname "$(realpath "${BASH_SOURCE[0]}")" )" >/dev/null 2>&1 && pwd )"
+abs_path () {
+    script_path=$(eval echo "$1")
+    directory=$(dirname "$script_path")
+    builtin cd "$directory" >/dev/null 2>&1 || exit
+    pwd -P
+}
+
+SCRIPT_DIR="$(abs_path "${BASH_SOURCE:-$0}")" >/dev/null 2>&1
 INSTALLDIR="${SCRIPT_DIR}"
 export INTEL_OPENVINO_DIR="$INSTALLDIR"
 
@@ -25,27 +32,20 @@ shift
 done
 
 if [ -e "$INSTALLDIR/runtime" ]; then
-    export InferenceEngine_DIR=$INSTALLDIR/runtime/cmake
-    export ngraph_DIR=$INSTALLDIR/runtime/cmake
     export OpenVINO_DIR=$INSTALLDIR/runtime/cmake
+    # If GenAI is installed, export it as well.
+    [ -f "$OpenVINO_DIR/OpenVINOGenAIConfig.cmake" ] && export OpenVINOGenAI_DIR=$OpenVINO_DIR
 
-    system_type=$(ls "$INSTALLDIR/runtime/lib/")
-    IE_PLUGINS_PATH=$INSTALLDIR/runtime/lib/$system_type
+    system_type=$(/bin/ls "$INSTALLDIR/runtime/lib/")
+    OV_PLUGINS_PATH=$INSTALLDIR/runtime/lib/$system_type
 
-    export HDDL_INSTALL_DIR=$INSTALLDIR/runtime/3rdparty/hddl
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        export DYLD_LIBRARY_PATH=${IE_PLUGINS_PATH}/Release:${IE_PLUGINS_PATH}/Debug${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}
-        export LD_LIBRARY_PATH=${IE_PLUGINS_PATH}/Release:${IE_PLUGINS_PATH}/Debug${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-        export PKG_CONFIG_PATH=${IE_PLUGINS_PATH}/Release/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
+        export DYLD_LIBRARY_PATH=${OV_PLUGINS_PATH}/Release:${OV_PLUGINS_PATH}/Debug${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}
+        export LD_LIBRARY_PATH=${OV_PLUGINS_PATH}/Release:${OV_PLUGINS_PATH}/Debug${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+        export PKG_CONFIG_PATH=${OV_PLUGINS_PATH}/Release/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
     else
-        export LD_LIBRARY_PATH=$HDDL_INSTALL_DIR/lib:${IE_PLUGINS_PATH}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-        export PKG_CONFIG_PATH=$IE_PLUGINS_PATH/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
-    fi
-
-    HDDL_UNITE_DIR=$INSTALLDIR/runtime/3rdparty/hddl_unite
-
-    if [ -e "$HDDL_UNITE_DIR" ]; then
-        export LD_LIBRARY_PATH=$HDDL_UNITE_DIR/lib:$HDDL_UNITE_DIR/thirdparty/XLink/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+        export LD_LIBRARY_PATH=${OV_PLUGINS_PATH}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+        export PKG_CONFIG_PATH=$OV_PLUGINS_PATH/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
     fi
 
     if [ -e "$INSTALLDIR/runtime/3rdparty/tbb" ]; then
@@ -57,7 +57,7 @@ if [ -e "$INSTALLDIR/runtime" ]; then
             fi
         fi
 
-        if ls "$tbb_lib_path"/libtbb* >/dev/null 2>&1; then
+        if /bin/ls "$tbb_lib_path"/libtbb* >/dev/null 2>&1; then
             if [[ "$OSTYPE" == "darwin"* ]]; then
                 export DYLD_LIBRARY_PATH=$tbb_lib_path:${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}
             fi
@@ -65,6 +65,7 @@ if [ -e "$INSTALLDIR/runtime" ]; then
         else
             echo "[setupvars.sh] WARNING: Directory with TBB libraries is not detected. Please, add TBB libraries to LD_LIBRARY_PATH / DYLD_LIBRARY_PATH manually"
         fi
+        unset tbb_lib_path
 
         if [ -e "$INSTALLDIR/runtime/3rdparty/tbb/lib/cmake/TBB" ]; then
             export TBB_DIR=$INSTALLDIR/runtime/3rdparty/tbb/lib/cmake/TBB
@@ -78,18 +79,18 @@ if [ -e "$INSTALLDIR/runtime" ]; then
             echo "[setupvars.sh] WARNING: TBB_DIR directory is not defined automatically by setupvars.sh. Please, set it manually to point to TBBConfig.cmake"
         fi
     fi
-fi
 
-if [ -e "$INSTALLDIR/tools/compile_tool" ]; then
-    export LD_LIBRARY_PATH=$INSTALLDIR/tools/compile_tool${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+    unset system_type
 fi
 
 # OpenCV environment
 if [ -f "$INSTALLDIR/opencv/setupvars.sh" ]; then
+    # shellcheck source=/dev/null
     source "$INSTALLDIR/opencv/setupvars.sh"
 fi
 
 if [ -f "$INSTALLDIR/extras/opencv/setupvars.sh" ]; then
+    # shellcheck source=/dev/null
     source "$INSTALLDIR/extras/opencv/setupvars.sh"
 fi
 
@@ -99,62 +100,54 @@ if command -v lsb_release >/dev/null 2>&1; then
 fi
 
 PYTHON_VERSION_MAJOR="3"
-MIN_REQUIRED_PYTHON_VERSION_MINOR="7"
-MAX_SUPPORTED_PYTHON_VERSION_MINOR="10"
+MIN_REQUIRED_PYTHON_VERSION_MINOR="9"
+MAX_SUPPORTED_PYTHON_VERSION_MINOR="13"
 
 check_python_version () {
     if [ -z "$python_version" ]; then
-        python_version=$(python3 -c 'import sys; print(str(sys.version_info[0])+"."+str(sys.version_info[1]))')
-    fi
-
-    # splitting Python version variable depending on the used shell
-    if [ -n "$ZSH_VERSION" ]; then
-        version_arr=(${(@s:.:)python_version})
-        if [ "${#version_arr[@]}" -ge "2" ]; then
-            # zsh starts indexing from 1
-            python_version_major=${version_arr[1]}
-            python_version_minor=${version_arr[2]}
-        fi
+        python_version_major=$( python3 -c 'import sys; print(str(sys.version_info[0]))' )
+        python_version_minor=$( python3 -c 'import sys; print(str(sys.version_info[1]))' )
+        python_version="$python_version_major.$python_version_minor"
     else
-        version_arr=(${python_version//./ })
-        if [ "${#version_arr[@]}" -ge "2" ]; then
-            python_version_major=${version_arr[0]}
-            python_version_minor=${version_arr[1]}
-        fi
+        python_version_major=$( python3 -c "import sys; print(str(\"${python_version}\".split('.')[0]))" )
+        python_version_minor=$( python3 -c "import sys; print(str(\"${python_version}\".split('.')[1]))" )
     fi
 
     if  [ "$PYTHON_VERSION_MAJOR" != "$python_version_major" ] ||
         [ "$python_version_minor" -lt "$MIN_REQUIRED_PYTHON_VERSION_MINOR" ] ||
         [ "$python_version_minor" -gt "$MAX_SUPPORTED_PYTHON_VERSION_MINOR" ] ; then
-        echo "[setupvars.sh] WARNING: Unsupported Python version. Please install one of Python" \
+        echo "[setupvars.sh] WARNING: Unsupported Python version ${python_version}. Please install one of Python" \
         "${PYTHON_VERSION_MAJOR}.${MIN_REQUIRED_PYTHON_VERSION_MINOR} -" \
         "${PYTHON_VERSION_MAJOR}.${MAX_SUPPORTED_PYTHON_VERSION_MINOR} (64-bit) from https://www.python.org/downloads/"
+        unset python_version
         return 0
     fi
-    python_bitness=$(python"$python_version" -c 'import sys; print(64 if sys.maxsize > 2**32 else 32)')
+
+    if command -v python"$python_version" > /dev/null 2>&1; then
+        python_interp=python"$python_version"
+    else
+        python_interp=python"$python_version_major"
+    fi
+    python_bitness=$("$python_interp" -c 'import sys; print(64 if sys.maxsize > 2**32 else 32)')
+    unset python_interp
 
     if [ "$python_bitness" != "" ] && [ "$python_bitness" != "64" ] && [ "$OS_NAME" != "Raspbian" ]; then
         echo "[setupvars.sh] WARNING: 64 bitness for Python $python_version is required"
     fi
+    unset python_bitness
 
     if [ -n "$python_version" ]; then
         if [[ -d $INTEL_OPENVINO_DIR/python ]]; then
             # add path to OpenCV API for Python 3.x
             export PYTHONPATH="$INTEL_OPENVINO_DIR/python/python3:$PYTHONPATH"
-            pydir=$INTEL_OPENVINO_DIR/python/python$python_version
-            if [[ -d $pydir ]]; then
-                # add path to Inference Engine Python API
-                export PYTHONPATH="${pydir}:${PYTHONPATH}"
-            else
-                echo "[setupvars.sh] WARNING: Can not find OpenVINO Python module for python${python_version} by path ${pydir}"
-                echo "[setupvars.sh] WARNING: OpenVINO Python environment does not set properly"
-            fi
+            # add path to OpenVINO Python API
+            export PYTHONPATH="$INTEL_OPENVINO_DIR/python:${PYTHONPATH}"
         else
             echo "[setupvars.sh] WARNING: Can not find OpenVINO Python binaries by path ${INTEL_OPENVINO_DIR}/python"
             echo "[setupvars.sh] WARNING: OpenVINO Python environment does not set properly"
         fi
     fi
-} 
+}
 
 python_version_to_check="$python_version"
 if [ -z "$python_version" ]; then
@@ -168,5 +161,12 @@ if ! command -v python"$python_version_to_check" > /dev/null 2>&1; then
 else
     check_python_version
 fi
+
+unset python_version
+unset python_version_to_check
+unset PYTHON_VERSION_MAJOR
+unset MIN_REQUIRED_PYTHON_VERSION_MINOR
+unset MAX_SUPPORTED_PYTHON_VERSION_MINOR
+unset OS_NAME
 
 echo "[setupvars.sh] OpenVINO environment initialized"

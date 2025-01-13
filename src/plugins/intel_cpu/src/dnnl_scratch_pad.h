@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -6,26 +6,23 @@
 
 #include <memory>
 
-#include "common/memory.hpp"
 #include "cpu_memory.h"
-#include "dnnl_extension_utils.h"
+#include "utils/general_utils.h"
 
 namespace ov {
 namespace intel_cpu {
 
 class DnnlScratchPad {
-    DnnlMemoryMngrPtr mgrPtr;
+    MemoryBlockPtr blockPtr;
     dnnl::engine eng;
 
 public:
-    DnnlScratchPad(dnnl::engine eng) : eng(eng) {
-        mgrPtr = std::make_shared<DnnlMemoryMngr>(std::unique_ptr<MemoryMngrWithReuse>(new MemoryMngrWithReuse()));
+    DnnlScratchPad(const dnnl::engine& eng, int numa_node = -1) : eng(eng) {
+        blockPtr = std::make_shared<DnnlMemoryBlock>(make_unique<MemoryBlockWithReuse>(numa_node));
     }
 
     MemoryPtr createScratchPadMem(const MemoryDescPtr& md) {
-        auto mem = std::make_shared<Memory>(eng);
-        mem->Create(md, mgrPtr);
-        return mem;
+        return std::make_shared<Memory>(eng, md, blockPtr);
     }
 };
 

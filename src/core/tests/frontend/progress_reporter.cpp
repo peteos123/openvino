@@ -1,10 +1,11 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "openvino/frontend/extension/progress_reporter.hpp"
 
-#include "gtest/gtest.h"
+#include <gtest/gtest.h>
+
 #include "openvino/frontend/exception.hpp"
 
 using namespace ov::frontend;

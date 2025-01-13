@@ -1,11 +1,11 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include <openvino/pass/manager.hpp>
+#include <gtest/gtest.h>
 
-#include "gtest/gtest.h"
 #include "openvino/frontend/extension/decoder_transformation.hpp"
+#include "openvino/pass/manager.hpp"
 
 using namespace ov::frontend;
 
@@ -37,7 +37,7 @@ TEST(DecoderTransformation, FunctionPass) {
 namespace _decoder_transformation_test {
 class TestPass : public ov::pass::ModelPass {
 public:
-    OPENVINO_RTTI("ov::pass::TestPass");
+    OPENVINO_MODEL_PASS_RTTI("ov::pass::TestPass");
     TestPass() = default;
     TestPass(const TestPass& tp) = default;
     bool run_on_model(const std::shared_ptr<ov::Model>&) override {

@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -8,12 +8,13 @@
 #include <vector>
 
 #include "itt.hpp"
+#include "openvino/op/constant.hpp"
+#include "openvino/op/divide.hpp"
+#include "openvino/op/util/multi_subgraph_base.hpp"
 #include "openvino/op/util/precision_sensitive_attribute.hpp"
-#include "openvino/opsets/opset1.hpp"
-#include "openvino/opsets/opset3.hpp"
-#include "openvino/opsets/opset8.hpp"
 #include "openvino/pass/pattern/op/wrap_type.hpp"
 #include "transformations/rt_info/disable_fp16_compression.hpp"
+#include "transformations/rt_info/is_shape_subgraph.hpp"
 #include "transformations/rt_info/nonconvertible_divide.hpp"
 #include "transformations/utils/utils.hpp"
 
@@ -27,7 +28,7 @@ ov::pass::MarkPrecisionSensitiveShapeOfSubgraphs::MarkPrecisionSensitiveShapeOfS
 
 ov::pass::MarkPrecisionSensitiveConstants::MarkPrecisionSensitiveConstants() {
     m_markup_func = [](Node* node) {
-        if (ov::is_type<ov::opset8::Constant>(node)) {
+        if (ov::is_type<ov::op::v0::Constant>(node)) {
             ov::disable_fp16_compression(node->shared_from_this());
         }
     };
@@ -35,7 +36,7 @@ ov::pass::MarkPrecisionSensitiveConstants::MarkPrecisionSensitiveConstants() {
 
 ov::pass::MarkDividesInShapeSubgraphs::MarkDividesInShapeSubgraphs() {
     m_markup_func = [](Node* node) {
-        if (ov::is_type<ov::opset8::Divide>(node)) {
+        if (ov::is_type<ov::op::v1::Divide>(node)) {
             ov::disable_divide_conversion(node->shared_from_this());
         }
     };
@@ -64,9 +65,9 @@ bool ov::pass::MarkPrecisionSensitiveShapeOfSubgraphs::run_on_model(const shared
                 // visit_shape_path shouldn't depend on "visited" nodes because we can approach Divide
                 // earlier from some non precision sensitive path. So we use dedicated "precision_sensitive_visited"
                 // set for precision sensitive nodes, so they can be visited twice and finally marked-up.
-                ngraph::op::util::visit_shape_path(input.get_source_output().get_node(),
-                                                   precision_sensitive_visited,
-                                                   m_markup_func);
+                ov::op::util::visit_shape_path(input.get_source_output().get_node(),
+                                               precision_sensitive_visited,
+                                               m_markup_func);
             }
         }
 
@@ -88,4 +89,10 @@ bool ov::pass::MarkPrecisionSensitiveShapeOfSubgraphs::run_on_model(const shared
         }
     }
     return true;
+}
+
+ov::pass::MarkShapeOfSubgraphs::MarkShapeOfSubgraphs() {
+    m_markup_func = [](Node* node) {
+        mark_shape_subgraph(node->shared_from_this());
+    };
 }

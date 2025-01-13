@@ -1,14 +1,13 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
+#include "openvino/util/log.hpp"
 #if defined(_MSC_VER)
 #    pragma warning(push)
 // Protobuf: conversion from 'XXX' to 'YYY', possible loss of data
 #    pragma warning(disable : 4244)
 #endif
-
-#include "core/transform.hpp"
 
 #include <onnx/defs/function.h>
 #include <onnx/defs/schema.h>
@@ -17,33 +16,53 @@
 #include <algorithm>
 
 #include "core/model.hpp"
-#include "ngraph/log.hpp"
+#include "core/transform.hpp"
+#include "openvino/util/log.hpp"
 #include "ops_bridge.hpp"
 
-namespace ngraph {
-namespace onnx_import {
+using namespace ::ONNX_NAMESPACE;
+
+namespace ov {
+namespace frontend {
+namespace onnx {
 namespace transform {
 namespace {
-ONNX_NAMESPACE::TypeProto get_input_type(std::string const& name, ONNX_NAMESPACE::GraphProto& graph) {
-    for (auto& input : graph.input()) {
+TypeProto get_input_type(std::string const& name, GraphProto& graph) {
+    for (const auto& input : graph.input()) {
         if (input.name() == name) {
             return input.type();
         }
     }
-    for (auto& value_info : graph.value_info()) {
+    for (const auto& initializer : graph.initializer()) {
+        if (initializer.name() == name) {
+            TypeProto ret;
+            auto* tensor_type = ret.mutable_tensor_type();
+            tensor_type->set_elem_type(initializer.data_type());
+
+            auto* tensor_shape = tensor_type->mutable_shape();
+            tensor_shape->clear_dim();
+            const auto& initializer_dims = initializer.dims();
+            for (auto&& dim : initializer_dims) {
+                auto* new_dim = tensor_shape->add_dim();
+                new_dim->set_dim_value(dim);
+            }
+            return ret;
+        }
+    }
+    for (const auto& value_info : graph.value_info()) {
         if (value_info.name() == name) {
             return value_info.type();
         }
     }
-    return ONNX_NAMESPACE::TypeProto();
+    return TypeProto();
 }
 
-void function_expand_and_remove_original_node(const ONNX_NAMESPACE::NodeProto& node,
-                                              const ONNX_NAMESPACE::FunctionProto& func_proto,
-                                              ONNX_NAMESPACE::GraphProto* graph,
+void function_expand_and_remove_original_node(const NodeProto& node,
+                                              const FunctionProto& func_proto,
+                                              GraphProto* graph,
                                               int current_node_idx) {
     const auto before_expand_size = graph->node().size();
-    ONNX_NAMESPACE::FunctionExpandHelper(node, func_proto, *graph);
+    FunctionExpandHelper(node, func_proto, *graph);
     const auto added_nodes = graph->node().size() - before_expand_size;
 
     // Remove the original node which contained the function
@@ -57,14 +76,15 @@ void function_expand_and_remove_original_node(const ONNX_NAMESPACE::NodeProto& n
 
 }  // namespace
 }  // namespace transform
-}  // namespace onnx_import
-}  // namespace ngraph
+}  // namespace onnx
+}  // namespace frontend
+}  // namespace ov
 
-void ngraph::onnx_import::transform::expand_onnx_functions(ONNX_NAMESPACE::ModelProto& model_proto) {
+void ov::frontend::onnx::transform::expand_onnx_functions(ModelProto& model_proto) {
     auto graph_proto = model_proto.mutable_graph();
 
     for (int i = 0; i < graph_proto->node().size(); ++i) {
-        ONNX_NAMESPACE::NodeProto node = graph_proto->node().Get(i);
+        NodeProto node = graph_proto->node().Get(i);
 
         // Check if node operation is one of the functions we want to expand
         if (std::find(onnx_functions_to_expand.begin(), onnx_functions_to_expand.end(), node.op_type()) ==
@@ -74,7 +94,7 @@ void ngraph::onnx_import::transform::expand_onnx_functions(ONNX_NAMESPACE::Model
 
         // Retrieve the operation schema from ONNX library
         int opset_version = static_cast<int>(get_opset_version(model_proto, node.domain()));
-        const auto* schema_registry = ONNX_NAMESPACE::OpSchemaRegistry::Instance();
+        const auto* schema_registry = OpSchemaRegistry::Instance();
         const auto node_op_schema = schema_registry->GetSchema(node.op_type(), opset_version, node.domain());
 
         // Check if operation schema found
@@ -92,18 +112,22 @@ void ngraph::onnx_import::transform::expand_onnx_functions(ONNX_NAMESPACE::Model
         else if (node_op_schema->HasContextDependentFunction()) {
             // In order to expand a context-dependent function, we need to infer types
             try {
-                ONNX_NAMESPACE::shape_inference::InferShapes(model_proto);
+                shape_inference::InferShapes(model_proto);
+#ifdef ENABLE_OPENVINO_DEBUG
             } catch (const std::exception& e) {
-                NGRAPH_WARN << "ONNX Shape inference failed: " << e.what();
+                OPENVINO_WARN("ONNX ov::Shape inference failed: ", e.what());
             }
-
-            std::vector<ONNX_NAMESPACE::TypeProto> input_types;
+#else
+            } catch (const std::exception&) {
+            }
+#endif
+            std::vector<TypeProto> input_types;
             for (const auto& input : node.input()) {
                 input_types.push_back(get_input_type(input, *graph_proto));
             }
 
-            ONNX_NAMESPACE::FunctionBodyBuildContextImpl ctx(node, input_types);
-            ONNX_NAMESPACE::FunctionProto func_proto;
+            FunctionBodyBuildContextImpl ctx(node, input_types);
+            FunctionProto func_proto;
             node_op_schema->BuildContextDependentFunction(ctx, func_proto);
             // Move index to the previous position because a first node of expanded function can have also function
             function_expand_and_remove_original_node(node, func_proto, graph_proto, i--);
@@ -111,7 +135,7 @@ void ngraph::onnx_import::transform::expand_onnx_functions(ONNX_NAMESPACE::Model
     }
 }
 
-void ngraph::onnx_import::transform::fixup_legacy_operators(ONNX_NAMESPACE::ModelProto& model_proto) {
+void ov::frontend::onnx::transform::fixup_legacy_operators(ModelProto& model_proto) {
     auto graph_proto = model_proto.mutable_graph();
     for (auto& node : *graph_proto->mutable_node()) {
         auto it = std::find(legacy_ops_to_fixup.begin(), legacy_ops_to_fixup.end(), node.op_type());

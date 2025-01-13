@@ -1,12 +1,12 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "gather_tree_kernel_ref.h"
 
 namespace kernel_selector {
-KernelsData GatherTreeKernelRef::GetKernelsData(const Params & params, const optional_params & options) const {
-    return GetCommonKernelsData(params, options);
+KernelsData GatherTreeKernelRef::GetKernelsData(const Params & params) const {
+    return GetCommonKernelsData(params);
 }
 
 ParamsKey GatherTreeKernelRef::GetSupportedKey() const {
@@ -14,8 +14,12 @@ ParamsKey GatherTreeKernelRef::GetSupportedKey() const {
 
     k.EnableInputDataType(Datatype::INT32);
     k.EnableOutputDataType(Datatype::INT32);
+
     k.EnableInputDataType(Datatype::F32);
     k.EnableOutputDataType(Datatype::F32);
+
+    k.EnableInputDataType(Datatype::F16);
+    k.EnableOutputDataType(Datatype::F16);
 
     k.EnableInputLayout(DataLayout::bfyx);
     k.EnableOutputLayout(DataLayout::bfyx);
@@ -59,7 +63,7 @@ ParamsKey GatherTreeKernelRef::GetSupportedKey() const {
     return k;
 }
 
-KernelsPriority GatherTreeKernelRef::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority GatherTreeKernelRef::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_9;
 }
 }  // namespace kernel_selector

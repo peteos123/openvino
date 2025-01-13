@@ -1,15 +1,10 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <ie_common.h>
-#include <node.h>
-
-#include <memory>
-#include <string>
-#include <vector>
+#include "node.h"
 
 namespace ov {
 namespace intel_cpu {
@@ -25,19 +20,21 @@ enum MatrixNmsDecayFunction { GAUSSIAN, LINEAR };
 
 class MatrixNms : public Node {
 public:
-    MatrixNms(const std::shared_ptr<ngraph::Node>& op, const GraphContext::CPtr context);
+    MatrixNms(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr context);
 
-    void getSupportedDescriptors() override {};
+    void getSupportedDescriptors() override{};
     void initSupportedPrimitiveDescriptors() override;
     void execute(dnnl::stream strm) override;
     bool created() const override;
 
-    static bool isSupportedOperation(const std::shared_ptr<const ngraph::Node>& op, std::string& errorMessage) noexcept;
+    static bool isSupportedOperation(const std::shared_ptr<const ov::Node>& op, std::string& errorMessage) noexcept;
 
     bool isExecutable() const override;
     void executeDynamicImpl(dnnl::stream strm) override;
 
-    bool needShapeInfer() const override { return false; }
+    bool needShapeInfer() const override {
+        return false;
+    }
     void prepareParams() override;
 
 private:
@@ -66,8 +63,14 @@ private:
     float m_postThreshold;
     bool m_normalized;
 
+    bool m_outStaticShape = false;
+
     struct Rectangle {
-        Rectangle(float x_left, float y_left, float x_right, float y_right) : x1 {x_left}, y1 {y_left}, x2 {x_right}, y2 {y_right} {}
+        Rectangle(float x_left, float y_left, float x_right, float y_right)
+            : x1{x_left},
+              y1{y_left},
+              x2{x_right},
+              y2{y_right} {}
 
         Rectangle() = default;
 
@@ -79,7 +82,11 @@ private:
 
     struct BoxInfo {
         BoxInfo(const Rectangle& r, int64_t idx, float sc, int64_t batch_idx, int64_t class_idx)
-            : box {r}, index {idx}, batchIndex {batch_idx}, classIndex {class_idx}, score {sc} {}
+            : box{r},
+              index{idx},
+              batchIndex{batch_idx},
+              classIndex{class_idx},
+              score{sc} {}
 
         BoxInfo() = default;
 
@@ -98,12 +105,18 @@ private:
     size_t m_realNumClasses = 0;
     size_t m_realNumBoxes = 0;
     float (*m_decay_fn)(float, float, float) = nullptr;
-    void checkPrecision(const InferenceEngine::Precision prec, const std::vector<InferenceEngine::Precision> precList, const std::string name,
+    void checkPrecision(const ov::element::Type prec,
+                        const std::vector<ov::element::Type> precList,
+                        const std::string name,
                         const std::string type);
 
-    size_t nmsMatrix(const float* boxesData, const float* scoresData, BoxInfo* filterBoxes, const int64_t batchIdx, const int64_t classIdx);
+    size_t nmsMatrix(const float* boxesData,
+                     const float* scoresData,
+                     BoxInfo* filterBoxes,
+                     const int64_t batchIdx,
+                     const int64_t classIdx);
 };
 
-}   // namespace node
-}   // namespace intel_cpu
-}   // namespace ov
+}  // namespace node
+}  // namespace intel_cpu
+}  // namespace ov

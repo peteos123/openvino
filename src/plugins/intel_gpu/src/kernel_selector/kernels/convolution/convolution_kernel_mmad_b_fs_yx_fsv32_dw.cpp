@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -37,15 +37,14 @@ ParamsKey ConvolutionKernel_mmad_b_fs_yx_fsv32_dw::GetSupportedKey() const {
     k.EnableQuantization(QuantizationType::ASYMMETRIC_DATA);
     k.EnableQuantization(QuantizationType::ASYMMETRIC_WEIGHTS);
     k.EnableDifferentTypes();
-    k.DisableTuning();
     k.EnableGroupedConvolution();
     k.EnableDifferentInputWeightsTypes();
     return k;
 }
 
 
-bool ConvolutionKernel_mmad_b_fs_yx_fsv32_dw::Validate(const Params& p, const optional_params& o) const {
-    if (!Parent::Validate(p, o)) {
+bool ConvolutionKernel_mmad_b_fs_yx_fsv32_dw::Validate(const Params& p) const {
+    if (!Parent::Validate(p)) {
         return false;
     }
 
@@ -77,7 +76,7 @@ ConvolutionKernelBase::DispatchData ConvolutionKernel_mmad_b_fs_yx_fsv32_dw::Set
     return dispatchData;
 }
 
-KernelsPriority ConvolutionKernel_mmad_b_fs_yx_fsv32_dw::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority ConvolutionKernel_mmad_b_fs_yx_fsv32_dw::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_3;
 }
 
@@ -96,9 +95,8 @@ JitConstants ConvolutionKernel_mmad_b_fs_yx_fsv32_dw::GetJitConstants(const conv
 }
 
 
-KernelsData ConvolutionKernel_mmad_b_fs_yx_fsv32_dw::GetKernelsData(const Params& params,
-                                                                    const optional_params& options) const {
-    KernelsData kd = GetTunedKernelsDataByIndex(params, options);
+KernelsData ConvolutionKernel_mmad_b_fs_yx_fsv32_dw::GetKernelsData(const Params& params) const {
+    KernelsData kd = GetTunedKernelsDataByIndex(params);
     return kd;
 }
 

@@ -5,7 +5,6 @@
 #include "ov_ops/generate_proposals_ie_internal.hpp"
 
 #include <memory>
-#include <openvino/opsets/opset9.hpp>
 
 #include "itt.hpp"
 

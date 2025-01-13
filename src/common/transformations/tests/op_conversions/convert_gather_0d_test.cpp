@@ -1,23 +1,24 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
+
+#include "transformations/op_conversions/convert_gather_0d.hpp"
 
 #include <gtest/gtest.h>
 
 #include <memory>
-#include <ngraph/function.hpp>
-#include <ngraph/opsets/opset1.hpp>
-#include <ngraph/pass/manager.hpp>
 #include <queue>
 #include <string>
-#include <transformations/init_node_info.hpp>
-#include <transformations/op_conversions/convert_gather_0d.hpp>
-#include <transformations/utils/utils.hpp>
 
-#include "common_test_utils/ngraph_test_utils.hpp"
+#include "common_test_utils/ov_test_utils.hpp"
+#include "openvino/core/model.hpp"
+#include "openvino/opsets/opset1.hpp"
+#include "openvino/pass/manager.hpp"
+#include "transformations/init_node_info.hpp"
+#include "transformations/utils/utils.hpp"
 
 using namespace testing;
-using namespace ngraph;
+using namespace ov;
 
 TEST_F(TransformationTestsF, ConvertGather0DStatic1) {
     {
@@ -26,10 +27,10 @@ TEST_F(TransformationTestsF, ConvertGather0DStatic1) {
         auto axis_const = opset1::Constant::create(element::i64, Shape{}, {1});
         auto gather = std::make_shared<opset1::Gather>(input, indices, axis_const);
 
-        function = std::make_shared<Function>(NodeVector{gather}, ParameterVector{input, indices});
+        model = std::make_shared<Model>(NodeVector{gather}, ParameterVector{input, indices});
 
         pass::Manager manager;
-        manager.register_pass<pass::ConvertGather0D>();
+        manager.register_pass<ov::pass::ConvertGather0D>();
     }
 
     {
@@ -38,7 +39,7 @@ TEST_F(TransformationTestsF, ConvertGather0DStatic1) {
         auto axis_const = opset1::Constant::create(element::i64, Shape{}, {1});
         auto gather = std::make_shared<opset1::Gather>(input, indices, axis_const);
 
-        function_ref = std::make_shared<Function>(NodeVector{gather}, ParameterVector{input, indices});
+        model_ref = std::make_shared<Model>(NodeVector{gather}, ParameterVector{input, indices});
     }
 }
 
@@ -49,8 +50,8 @@ TEST_F(TransformationTestsF, ConvertGather0DStatic2) {
         auto axis_const = opset1::Constant::create(element::i64, Shape{}, {1});
         auto gather = std::make_shared<opset1::Gather>(input, indices, axis_const);
 
-        function = std::make_shared<Function>(NodeVector{gather}, ParameterVector{input, indices});
-        manager.register_pass<pass::ConvertGather0D>();
+        model = std::make_shared<Model>(NodeVector{gather}, ParameterVector{input, indices});
+        manager.register_pass<ov::pass::ConvertGather0D>();
     }
 
     {
@@ -62,6 +63,6 @@ TEST_F(TransformationTestsF, ConvertGather0DStatic2) {
         auto gather = std::make_shared<opset1::Gather>(input, unsqueeze, axis_const);
         auto squeeze = std::make_shared<opset1::Squeeze>(gather, opset1::Constant::create(element::i64, Shape{1}, {1}));
 
-        function_ref = std::make_shared<Function>(NodeVector{squeeze}, ParameterVector{input, indices});
+        model_ref = std::make_shared<Model>(NodeVector{squeeze}, ParameterVector{input, indices});
     }
 }

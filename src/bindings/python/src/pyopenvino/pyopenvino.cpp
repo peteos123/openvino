@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #include <pybind11/pybind11.h>
@@ -19,21 +19,25 @@
 #include "pyopenvino/graph/node_factory.hpp"
 #include "pyopenvino/graph/node_input.hpp"
 #include "pyopenvino/graph/node_output.hpp"
+#include <pyopenvino/graph/op.hpp>
 #if defined(ENABLE_OV_ONNX_FRONTEND)
 #    include "pyopenvino/graph/onnx_import/onnx_import.hpp"
 #endif
 #include "pyopenvino/core/async_infer_queue.hpp"
 #include "pyopenvino/core/compiled_model.hpp"
-#include "pyopenvino/core/containers.hpp"
 #include "pyopenvino/core/core.hpp"
 #include "pyopenvino/core/extension.hpp"
 #include "pyopenvino/core/infer_request.hpp"
 #include "pyopenvino/core/offline_transformations.hpp"
 #include "pyopenvino/core/profiling_info.hpp"
 #include "pyopenvino/core/properties/properties.hpp"
+#include "pyopenvino/core/remote_context.hpp"
+#include "pyopenvino/core/remote_tensor.hpp"
 #include "pyopenvino/core/tensor.hpp"
 #include "pyopenvino/core/variable_state.hpp"
 #include "pyopenvino/core/version.hpp"
+#include "pyopenvino/experimental/experimental.hpp"
+#include "pyopenvino/frontend/decoder.hpp"
 #include "pyopenvino/frontend/extension.hpp"
 #include "pyopenvino/frontend/frontend.hpp"
 #include "pyopenvino/frontend/input_model.hpp"
@@ -44,12 +48,16 @@
 #include "pyopenvino/graph/descriptors/tensor.hpp"
 #include "pyopenvino/graph/dimension.hpp"
 #include "pyopenvino/graph/discrete_type_info.hpp"
+#include "pyopenvino/graph/attribute_visitor.hpp"
 #include "pyopenvino/graph/layout.hpp"
 #include "pyopenvino/graph/layout_helpers.hpp"
+#include "pyopenvino/graph/ops/assign.hpp"
 #include "pyopenvino/graph/ops/constant.hpp"
 #include "pyopenvino/graph/ops/if.hpp"
 #include "pyopenvino/graph/ops/loop.hpp"
+#include "pyopenvino/graph/ops/paged_attention_extension.hpp"
 #include "pyopenvino/graph/ops/parameter.hpp"
+#include "pyopenvino/graph/ops/read_value.hpp"
 #include "pyopenvino/graph/ops/result.hpp"
 #include "pyopenvino/graph/ops/tensor_iterator.hpp"
 #include "pyopenvino/graph/ops/util/regmodule_graph_op_util.hpp"
@@ -59,6 +67,7 @@
 #include "pyopenvino/graph/rt_map.hpp"
 #include "pyopenvino/graph/shape.hpp"
 #include "pyopenvino/graph/strides.hpp"
+#include "pyopenvino/graph/symbol.hpp"
 #include "pyopenvino/graph/types/regmodule_graph_types.hpp"
 #include "pyopenvino/graph/util.hpp"
 #include "pyopenvino/utils/utils.hpp"
@@ -89,10 +98,25 @@ PYBIND11_MODULE(_pyopenvino, m) {
 
     m.def("get_version", &get_version);
     m.def("get_batch", &ov::get_batch);
-    m.def("set_batch", &ov::set_batch);
+    m.def(
+        "get_batch",
+        [](const py::object& ie_api_model) {
+            const auto model = Common::utils::convert_to_model(ie_api_model);
+            return ov::get_batch(model);
+        },
+        py::arg("model"));
     m.def(
         "set_batch",
-        [](const std::shared_ptr<ov::Model>& model, int64_t value) {
+        [](const py::object& ie_api_model, ov::Dimension value) {
+            auto model = Common::utils::convert_to_model(ie_api_model);
+            ov::set_batch(model, value);
+        },
+        py::arg("model"),
+        py::arg("dimension"));
+    m.def(
+        "set_batch",
+        [](const py::object& ie_api_model, int64_t value) {
+            auto model = Common::utils::convert_to_model(ie_api_model);
             ov::set_batch(model, ov::Dimension(value));
         },
         py::arg("model"),
@@ -100,10 +124,11 @@ PYBIND11_MODULE(_pyopenvino, m) {
 
     m.def(
         "serialize",
-        [](std::shared_ptr<ov::Model>& model,
+        [](py::object& ie_api_model,
            const py::object& xml_path,
            const py::object& bin_path,
            const std::string& version) {
+            const auto model = Common::utils::convert_to_model(ie_api_model);
             ov::serialize(model,
                           Common::utils::convert_path_to_string(xml_path),
                           Common::utils::convert_path_to_string(bin_path),
@@ -116,6 +141,10 @@ PYBIND11_MODULE(_pyopenvino, m) {
         R"(
             Serialize given model into IR. The generated .xml and .bin files will be saved
             into provided paths.
+            This method serializes model "as-is" that means no weights compression is applied.
+            It is recommended to use ov::save_model function instead of ov::serialize in all cases
+            when it is not related to debugging.
+
             :param model: model which will be converted to IR representation
             :type model: openvino.runtime.Model
             :param xml_path: path where .xml file will be saved
@@ -124,6 +153,8 @@ PYBIND11_MODULE(_pyopenvino, m) {
                              the same name as for xml_path will be used by default.
             :type bin_path: Union[str, bytes, pathlib.Path]
             :param version: version of the generated IR (optional).
+            :type version: str
+
             Supported versions are:
             - "UNSPECIFIED" (default) : Use the latest or model version
             - "IR_V10" : v10 IR
@@ -156,6 +187,36 @@ PYBIND11_MODULE(_pyopenvino, m) {
                 serialize(model, xml_path="./serialized.xml", bin_path="./serialized.bin", version="IR_V11")
         )");
 
+    m.def(
+        "save_model",
+        [](py::object& ie_api_model, const py::object& xml_path, bool compress_to_fp16) {
+            const auto model = Common::utils::convert_to_model(ie_api_model);
+            ov::save_model(model, Common::utils::convert_path_to_string(xml_path), compress_to_fp16);
+        },
+        py::arg("model"),
+        py::arg("output_model"),
+        py::arg("compress_to_fp16") = true,
+        R"(
+            Save model into IR files (xml and bin). Floating point weights are compressed to FP16 by default.
+            This method saves a model to IR applying all necessary transformations that usually applied
+            in model conversion flow provided by OVC tool. Paricularly, floatting point weights are
+            compressed to FP16, debug information in model nodes are cleaned up, etc.
+
+            :param model: model which will be converted to IR representation
+            :type model: openvino.runtime.Model
+            :param output_model: path to output model file
+            :type output_model: Union[str, bytes, pathlib.Path]
+            :param compress_to_fp16: whether to compress floating point weights to FP16 (default: True). The parameter is ignored for pre-optimized models.
+            :type compress_to_fp16: bool
+
+            :Examples:
+
+            .. code-block:: python
+
+                model = convert_model('your_model.onnx')
+                save_model(model, './model.xml')
+        )");
+
     m.def("shutdown",
           &ov::shutdown,
           R"(
@@ -170,11 +231,13 @@ PYBIND11_MODULE(_pyopenvino, m) {
 
     regclass_graph_PyRTMap(m);
     regmodule_graph_types(m);
+    regclass_graph_Symbol(m);     // Symbol must be registered before Dimension
     regclass_graph_Dimension(m);  // Dimension must be registered before PartialShape
     regclass_graph_Layout(m);
     regclass_graph_Shape(m);
     regclass_graph_PartialShape(m);
     regclass_graph_Node(m);
+    regclass_graph_Op(m);
     regclass_graph_Input(m);
     regclass_graph_NodeFactory(m);
     regclass_graph_Strides(m);
@@ -184,9 +247,13 @@ PYBIND11_MODULE(_pyopenvino, m) {
     regclass_graph_Coordinate(m);
     regclass_graph_descriptor_Tensor(m);
     regclass_graph_DiscreteTypeInfo(m);
+    regclass_graph_AttributeVisitor(m);
     py::module m_op = m.def_submodule("op", "Package ngraph.impl.op that wraps ov::op");  // TODO(!)
+    regclass_graph_op_Assign(m_op);
     regclass_graph_op_Constant(m_op);
+    regclass_graph_op_PagedAttentionExtension(m_op);
     regclass_graph_op_Parameter(m_op);
+    regclass_graph_op_ReadValue(m_op);
     regclass_graph_op_Result(m_op);
     regclass_graph_op_If(m_op);
     regclass_graph_op_Loop(m_op);
@@ -196,6 +263,7 @@ PYBIND11_MODULE(_pyopenvino, m) {
     regmodule_graph_onnx_import(m);
 #endif
     regmodule_graph_op_util(m_op);
+    regmodule_experimental(m);
     py::module m_preprocess =
         m.def_submodule("preprocess", "Package openvino.runtime.preprocess that wraps ov::preprocess");
     regclass_graph_PrePostProcessor(m_preprocess);
@@ -209,9 +277,6 @@ PYBIND11_MODULE(_pyopenvino, m) {
 
     regclass_Core(m);
     regclass_Tensor(m);
-    // Registering specific types of containers
-    Containers::regclass_TensorIndexMap(m);
-    Containers::regclass_TensorNameMap(m);
 
     regclass_CompiledModel(m);
     regclass_InferRequest(m);
@@ -220,6 +285,11 @@ PYBIND11_MODULE(_pyopenvino, m) {
     regclass_AsyncInferQueue(m);
     regclass_ProfilingInfo(m);
     regclass_Extension(m);
+
+    regclass_RemoteContext(m);
+    regclass_RemoteTensor(m);
+    regclass_VAContext(m);
+    regclass_VASurfaceTensor(m);
 
     // Properties and hints
     regmodule_properties(m);
@@ -235,6 +305,7 @@ PYBIND11_MODULE(_pyopenvino, m) {
     regclass_frontend_FrontEnd(m);
     regclass_frontend_InputModel(m);
     regclass_frontend_NodeContext(m);
+    regclass_frontend_IDecoder(m);
 
     // frontend extensions
     regclass_frontend_TelemetryExtension(m);

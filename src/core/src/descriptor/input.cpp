@@ -1,10 +1,9 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "openvino/core/descriptor/input.hpp"
 
-#include "ngraph/env_util.hpp"
 #include "openvino/core/descriptor/output.hpp"
 #include "openvino/core/node.hpp"
 #include "openvino/core/type/element_type.hpp"
@@ -16,7 +15,7 @@ ov::descriptor::Input::Input(ov::Node* node, size_t index, Output& output)
       m_output(&output),
       m_is_relevant_to_shape(false),
       m_is_relevant_to_value(true) {
-    m_src_node = std::shared_ptr<ngraph::Node>(output.get_node());
+    m_src_node = std::shared_ptr<ov::Node>(output.get_node());
     output.add_input(this);
 }
 
@@ -37,7 +36,7 @@ void ov::descriptor::Input::replace_output(Output& new_output) {
     }
     new_output.add_input(this);
     m_output = &new_output;
-    m_src_node = std::shared_ptr<ngraph::Node>(new_output.get_node());
+    m_src_node = std::shared_ptr<ov::Node>(new_output.get_node());
 
     // Output replacement may change the topological order of nodes,
     // so we have to reset cache by setting a flag into shared node info.
@@ -60,7 +59,7 @@ void ov::descriptor::Input::remove_output() {
     }
 }
 
-std::shared_ptr<ngraph::Node> ov::descriptor::Input::get_node() const {
+std::shared_ptr<ov::Node> ov::descriptor::Input::get_node() const {
     return m_node->shared_from_this();
 }
 
@@ -70,14 +69,6 @@ const ov::descriptor::Tensor& ov::descriptor::Input::get_tensor() const {
 
 ov::descriptor::Tensor& ov::descriptor::Input::get_tensor() {
     return m_output->get_tensor();
-}
-
-std::shared_ptr<const ov::descriptor::Tensor> ov::descriptor::Input::get_tensor_ptr() const {
-    return m_output->get_tensor_ptr();
-}
-
-std::shared_ptr<ov::descriptor::Tensor> ov::descriptor::Input::get_tensor_ptr() {
-    return m_output->get_tensor_ptr();
 }
 
 const ov::Shape& ov::descriptor::Input::get_shape() const {

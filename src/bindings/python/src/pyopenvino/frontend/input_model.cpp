@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -30,6 +30,18 @@ void regclass_frontend_InputModel(py::module m) {
                 :param tensor_name: Name of tensor.
                 :type tensor_name: str
                 :return: Tensor place corresponding to specified tensor name.
+                :rtype: openvino.frontend.Place
+             )");
+
+    im.def("get_place_by_input_index",
+           &ov::frontend::InputModel::get_place_by_input_index,
+           py::arg("input_idx"),
+           R"(
+                Returns a tensor place by an input index.
+
+                :param input_idx: Index of model input.
+                :type input_idx: int
+                :return: Tensor place corresponding to specified input index or nullptr.
                 :rtype: openvino.frontend.Place
              )");
 
@@ -310,7 +322,7 @@ void regclass_frontend_InputModel(py::module m) {
         "set_tensor_value",
         [](ov::frontend::InputModel& self, const ov::frontend::Place::Ptr& place, py::array& value) {
             // Convert to contiguous array if not already C-style.
-            auto tensor = Common::tensor_from_numpy(value, false);
+            auto tensor = Common::object_from_data<ov::Tensor>(value, false);
             self.set_tensor_value(place, (const void*)tensor.data());
         },
         py::arg("place"),

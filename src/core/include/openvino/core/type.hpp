@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -14,7 +14,6 @@
 #include <vector>
 
 #include "openvino/core/core_visibility.hpp"
-#include "openvino/core/deprecated.hpp"
 
 namespace ov {
 
@@ -30,14 +29,11 @@ namespace ov {
  */
 struct OPENVINO_API DiscreteTypeInfo {
     const char* name;
-    OPENVINO_DEPRECATED("This member was deprecated. Please use version_id instead.")
-    uint64_t version;
     const char* version_id;
     // A pointer to a parent type info; used for casting and inheritance traversal, not for
     // exact type identification
     const DiscreteTypeInfo* parent;
 
-    OPENVINO_SUPPRESS_DEPRECATED_START
     DiscreteTypeInfo() = default;
     DiscreteTypeInfo(const DiscreteTypeInfo&) = default;
     DiscreteTypeInfo(DiscreteTypeInfo&&) = default;
@@ -47,28 +43,15 @@ struct OPENVINO_API DiscreteTypeInfo {
                                         const char* _version_id,
                                         const DiscreteTypeInfo* _parent = nullptr)
         : name(_name),
-          version(0),
           version_id(_version_id),
           parent(_parent),
           hash_value(0) {}
 
-    constexpr DiscreteTypeInfo(const char* _name, uint64_t _version, const DiscreteTypeInfo* _parent = nullptr)
+    constexpr DiscreteTypeInfo(const char* _name, const DiscreteTypeInfo* _parent = nullptr)
         : name(_name),
-          version(_version),
           version_id(nullptr),
           parent(_parent),
           hash_value(0) {}
-
-    constexpr DiscreteTypeInfo(const char* _name,
-                               uint64_t _version,
-                               const char* _version_id,
-                               const DiscreteTypeInfo* _parent = nullptr)
-        : name(_name),
-          version(_version),
-          version_id(_version_id),
-          parent(_parent),
-          hash_value(0) {}
-    OPENVINO_SUPPRESS_DEPRECATED_END
 
     bool is_castable(const DiscreteTypeInfo& target_type) const;
 
@@ -131,9 +114,7 @@ struct AsTypePtr<std::shared_ptr<In>> {
 /// Type, nullptr otherwise
 template <typename T, typename U>
 auto as_type_ptr(const U& value) -> decltype(::ov::util::AsTypePtr<U>::template call<T>(value)) {
-    OPENVINO_SUPPRESS_DEPRECATED_START
     return ::ov::util::AsTypePtr<U>::template call<T>(value);
-    OPENVINO_SUPPRESS_DEPRECATED_END
 }
 }  // namespace ov
 

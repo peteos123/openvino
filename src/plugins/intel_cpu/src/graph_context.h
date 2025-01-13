@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -7,11 +7,18 @@
 #include "cache/multi_cache.h"
 #include "config.h"
 #include "dnnl_scratch_pad.h"
-#include "extension_mngr.h"
+#include "openvino/runtime/threading/cpu_streams_executor.hpp"
+#include "sub_memory_manager.hpp"
 #include "weights_cache.hpp"
 
 namespace ov {
 namespace intel_cpu {
+
+namespace node {
+class MemoryStatesRegister;
+}  // namespace node
+
+class NetworkMemoryControl;
 
 class GraphContext {
 public:
@@ -19,33 +26,17 @@ public:
     typedef std::shared_ptr<const GraphContext> CPtr;
 
     GraphContext(const Config& config,
-                 ExtensionManager::Ptr extensionManager,
                  WeightsSharing::Ptr w_cache,
-                 std::shared_ptr<std::mutex> sharedMutex,
-                 bool isGraphQuantized)
-        : config(config),
-          extensionManager(extensionManager),
-          weightsCache(w_cache),
-          sharedMutex(sharedMutex),
-          isGraphQuantizedFlag(isGraphQuantized) {
-        rtParamsCache = std::make_shared<MultiCache>(config.rtCacheCapacity);
-        rtScratchPad = std::make_shared<DnnlScratchPad>(eng);
-    }
+                 bool isGraphQuantized,
+                 ov::threading::IStreamsExecutor::Ptr streamExecutor = nullptr,
+                 std::shared_ptr<SubMemoryManager> sub_memory_manager = nullptr);
 
     const Config& getConfig() const {
         return config;
     }
 
-    ExtensionManager::Ptr getExtensionManager() const {
-        return extensionManager;
-    }
-
     WeightsSharing::Ptr getWeightsCache() const {
         return weightsCache;
-    }
-
-    std::shared_ptr<std::mutex> getSharedMutex() const {
-        return sharedMutex;
     }
 
     MultiCachePtr getParamsCache() const {
@@ -53,29 +44,62 @@ public:
     }
 
     DnnlScratchPadPtr getScratchPad() const {
-        return rtScratchPad;
+        return rtScratchPads[numaNodeId];
     }
 
-    dnnl::engine getEngine() const {
-        return eng;
+    const std::vector<DnnlScratchPadPtr>& getScratchPads() const {
+        return rtScratchPads;
     }
+
+    static const dnnl::engine& getEngine();
 
     bool isGraphQuantized() const {
         return isGraphQuantizedFlag;
     }
 
+    ov::threading::CPUStreamsExecutor::Ptr getCPUStreamExecutor() const {
+        return cpuStreamExecutor;
+    }
+
+    std::shared_ptr<SubMemoryManager> getSubMemory() const {
+        return subMemoryManager;
+    }
+
+    int getNumNumaNodes() const {
+        return numNumaNodes;
+    }
+
+    const std::shared_ptr<node::MemoryStatesRegister>& getMemoryStatesRegister() const {
+        return memoryStatesRegister;
+    }
+
+    const std::shared_ptr<NetworkMemoryControl>& getNetworkMemoryControl() const {
+        return networkMemoryControl;
+    }
+
 private:
     Config config;  // network-level config
 
-    ExtensionManager::Ptr extensionManager;
-    WeightsSharing::Ptr weightsCache;         // per NUMA node caches for sharing weights data
-    std::shared_ptr<std::mutex> sharedMutex;  // mutex for protection of type-relaxed Op in clone_model()
+    WeightsSharing::Ptr weightsCache;  // per NUMA node caches for sharing weights data
 
     MultiCachePtr rtParamsCache;     // primitive cache
     DnnlScratchPadPtr rtScratchPad;  // scratch pad
 
     bool isGraphQuantizedFlag = false;
-    static dnnl::engine eng;  // onednn engine (singleton)
+
+    std::vector<DnnlScratchPadPtr> rtScratchPads;  // scratch pad (each sub-stream has its own copy)
+
+    ov::threading::IStreamsExecutor::Ptr streamExecutor;  // stream executor for current graph
+
+    ov::threading::CPUStreamsExecutor::Ptr cpuStreamExecutor;  // cpu stream executor for current graph
+
+    std::shared_ptr<SubMemoryManager> subMemoryManager;
+
+    int numNumaNodes = 1;
+    int numaNodeId = 0;
+
+    std::shared_ptr<node::MemoryStatesRegister> memoryStatesRegister;
+    std::shared_ptr<NetworkMemoryControl> networkMemoryControl;
 };
 
 }  // namespace intel_cpu

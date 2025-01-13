@@ -11,17 +11,25 @@ namespace test {
 namespace snippets {
 
 typedef std::tuple<
-        std::vector<ov::Shape>,      // Input Shape All shapes
+        std::vector<InputShape>,     // Input Shape All shapes
         size_t,                      // Expected num nodes
         size_t,                      // Expected num subgraphs
         std::string                  // Target Device
 > TwoInputsAndOutputsParams;
 
 class TwoInputsAndOutputs : public testing::WithParamInterface<ov::test::snippets::TwoInputsAndOutputsParams>,
-                             virtual public ov::test::SnippetsTestsCommon {
+                            virtual public SnippetsTestsCommon {
 public:
     static std::string getTestCaseName(testing::TestParamInfo<ov::test::snippets::TwoInputsAndOutputsParams> obj);
 
+protected:
+    void SetUp() override;
+};
+
+// TwoInputsAndOutputsWithReversedOutput tests the same network with reversed order of Result nodes.
+// It changes order of nodes after topological sort. The test checks the correctness of the
+// algorithm for checking possible cyclic dependency for nodes with Result node in consumers in tokenization.
+class TwoInputsAndOutputsWithReversedOutputs : public TwoInputsAndOutputs {
 protected:
     void SetUp() override;
 };

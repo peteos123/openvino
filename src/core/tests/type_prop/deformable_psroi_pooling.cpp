@@ -1,13 +1,58 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "gtest/gtest.h"
-#include "ngraph/ngraph.hpp"
-#include "util/type_prop.hpp"
+#include "openvino/op/deformable_psroi_pooling.hpp"
+
+#include <gtest/gtest.h>
+
+#include "common_test_utils/type_prop.hpp"
 
 using namespace std;
-using namespace ngraph;
+using namespace ov;
+using namespace testing;
+
+TEST(type_prop, deformable_psroi_pooling_default_ctor) {
+    const int64_t output_dim = 48;
+    const int64_t group_size = 2;
+
+    const auto rois_dim = 30;
+
+    auto input_data = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{2, 4, 64, 56});
+    auto input_coords = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{rois_dim, 5});
+
+    auto op = make_shared<op::v1::DeformablePSROIPooling>();
+
+    op->set_arguments(OutputVector{input_data, input_coords});
+    op->set_output_dim(output_dim);
+    op->set_group_size(group_size);
+
+    op->validate_and_infer_types();
+
+    const PartialShape expected_output{rois_dim, output_dim, group_size, group_size};
+    EXPECT_EQ(op->get_output_partial_shape(0), expected_output);
+}
+
+TEST(type_prop, deformable_psroi_pooling_interval_labels) {
+    const float spatial_scale = 0.05f;
+    const int64_t output_dim = 48;
+    const int64_t group_size = 2;
+
+    const auto rois_dim = Dimension(15, 30);
+
+    auto input_data = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{2, 4, 64, 56});
+
+    auto coords_shape = PartialShape{rois_dim, 5};
+    auto symbols = set_shape_symbols(coords_shape);
+    auto input_coords = make_shared<ov::op::v0::Parameter>(element::f32, coords_shape);
+
+    auto op =
+        make_shared<op::v1::DeformablePSROIPooling>(input_data, input_coords, output_dim, spatial_scale, group_size);
+
+    const PartialShape expected_output{rois_dim, output_dim, group_size, group_size};
+    EXPECT_EQ(op->get_output_partial_shape(0), expected_output);
+    EXPECT_THAT(get_shape_symbols(op->get_output_partial_shape(0)), ElementsAre(symbols[0], nullptr, nullptr, nullptr));
+}
 
 TEST(type_prop, deformable_psroi_pooling_no_offsets_group_size_3) {
     const float spatial_scale = 0.0625;
@@ -16,8 +61,8 @@ TEST(type_prop, deformable_psroi_pooling_no_offsets_group_size_3) {
 
     const auto rois_dim = 300;
 
-    auto input_data = make_shared<op::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
-    auto input_coords = make_shared<op::Parameter>(element::f32, PartialShape{rois_dim, 5});
+    auto input_data = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
+    auto input_coords = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{rois_dim, 5});
 
     auto def_psroi_pool =
         make_shared<op::v1::DeformablePSROIPooling>(input_data, input_coords, output_dim, spatial_scale, group_size);
@@ -35,9 +80,10 @@ TEST(type_prop, deformable_psroi_pooling_group_size_3) {
 
     const auto rois_dim = 300;
 
-    auto input_data = make_shared<op::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
-    auto input_coords = make_shared<op::Parameter>(element::f32, PartialShape{rois_dim, 5});
-    auto input_offsets = make_shared<op::Parameter>(element::f32, PartialShape{rois_dim, 2, part_size, part_size});
+    auto input_data = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
+    auto input_coords = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{rois_dim, 5});
+    auto input_offsets =
+        make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{rois_dim, 2, part_size, part_size});
 
     auto def_psroi_pool = make_shared<op::v1::DeformablePSROIPooling>(input_data,
                                                                       input_coords,
@@ -64,9 +110,10 @@ TEST(type_prop, deformable_psroi_pooling_group_size_7) {
 
     const auto rois_dim = 300;
 
-    auto input_data = make_shared<op::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
-    auto input_coords = make_shared<op::Parameter>(element::f32, PartialShape{rois_dim, 5});
-    auto input_offsets = make_shared<op::Parameter>(element::f32, PartialShape{rois_dim, 2, part_size, part_size});
+    auto input_data = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
+    auto input_coords = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{rois_dim, 5});
+    auto input_offsets =
+        make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{rois_dim, 2, part_size, part_size});
 
     auto def_psroi_pool = make_shared<op::v1::DeformablePSROIPooling>(input_data,
                                                                       input_coords,
@@ -91,8 +138,8 @@ TEST(type_prop, deformable_psroi_pooling_dynamic_rois) {
 
     const auto rois_dim = Dimension(100, 200);
 
-    auto input_data = make_shared<op::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
-    auto input_coords = make_shared<op::Parameter>(element::f32, PartialShape{rois_dim, 5});
+    auto input_data = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
+    auto input_coords = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{rois_dim, 5});
 
     auto def_psroi_pool =
         make_shared<op::v1::DeformablePSROIPooling>(input_data, input_coords, output_dim, spatial_scale, group_size);
@@ -108,8 +155,8 @@ TEST(type_prop, deformable_psroi_pooling_fully_dynamic) {
 
     const auto rois_dim = Dimension::dynamic();
 
-    auto input_data = make_shared<op::Parameter>(element::f32, PartialShape::dynamic());
-    auto input_coords = make_shared<op::Parameter>(element::f32, PartialShape::dynamic());
+    auto input_data = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape::dynamic());
+    auto input_coords = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape::dynamic());
 
     auto def_psroi_pool =
         make_shared<op::v1::DeformablePSROIPooling>(input_data, input_coords, output_dim, spatial_scale, group_size);
@@ -125,8 +172,8 @@ TEST(type_prop, deformable_psroi_pooling_invalid_group_size) {
     try {
         const int64_t group_size = 0;
 
-        auto input_data = make_shared<op::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
-        auto input_coords = make_shared<op::Parameter>(element::f32, PartialShape{rois_dim, 5});
+        auto input_data = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
+        auto input_coords = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{rois_dim, 5});
         auto def_psroi_pool = make_shared<op::v1::DeformablePSROIPooling>(input_data,
                                                                           input_coords,
                                                                           output_dim,
@@ -149,8 +196,8 @@ TEST(type_prop, deformable_psroi_pooling_invalid_output_dim) {
     try {
         const int64_t output_dim = -882;
 
-        auto input_data = make_shared<op::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
-        auto input_coords = make_shared<op::Parameter>(element::f32, PartialShape{rois_dim, 5});
+        auto input_data = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
+        auto input_coords = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{rois_dim, 5});
         auto def_psroi_pool = make_shared<op::v1::DeformablePSROIPooling>(input_data,
                                                                           input_coords,
                                                                           output_dim,
@@ -174,9 +221,10 @@ TEST(type_prop, deformable_psroi_pooling_invalid_data_input_rank) {
 
     const auto rois_dim = 300;
 
-    auto input_data = make_shared<op::Parameter>(element::f32, PartialShape{7938, 63, 38});
-    auto input_coords = make_shared<op::Parameter>(element::f32, PartialShape{rois_dim, 5});
-    auto input_offsets = make_shared<op::Parameter>(element::f32, PartialShape{rois_dim, 2, part_size, part_size});
+    auto input_data = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{7938, 63, 38});
+    auto input_coords = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{rois_dim, 5});
+    auto input_offsets =
+        make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{rois_dim, 2, part_size, part_size});
 
     try {
         auto def_psroi_pool = make_shared<op::v1::DeformablePSROIPooling>(input_data,
@@ -207,8 +255,8 @@ TEST(type_prop, deformable_psroi_pooling_invalid_box_coordinates_rank) {
 
     const auto rois_dim = 300;
 
-    auto input_data = make_shared<op::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
-    auto input_coords = make_shared<op::Parameter>(element::f32, PartialShape{2, rois_dim, 5});
+    auto input_data = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
+    auto input_coords = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{2, rois_dim, 5});
     try {
         auto def_psroi_pool = make_shared<op::v1::DeformablePSROIPooling>(input_data,
                                                                           input_coords,
@@ -233,9 +281,10 @@ TEST(type_prop, deformable_psroi_pooling_invalid_offstes_rank) {
 
     const auto rois_dim = 300;
 
-    auto input_data = make_shared<op::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
-    auto input_coords = make_shared<op::Parameter>(element::f32, PartialShape{rois_dim, 5});
-    auto input_offsets = make_shared<op::Parameter>(element::f32, PartialShape{2, rois_dim, 2, part_size, part_size});
+    auto input_data = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{2, 7938, 63, 38});
+    auto input_coords = make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{rois_dim, 5});
+    auto input_offsets =
+        make_shared<ov::op::v0::Parameter>(element::f32, PartialShape{2, rois_dim, 2, part_size, part_size});
     try {
         auto def_psroi_pool = make_shared<op::v1::DeformablePSROIPooling>(input_data,
                                                                           input_coords,

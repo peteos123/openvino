@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -9,7 +9,6 @@
 #include "openvino/core/runtime_attribute.hpp"
 #include "utils.hpp"
 
-using namespace ngraph;
 using namespace ov::frontend;
 
 std::string FrontEndLoadFromTest::getTestCaseName(const testing::TestParamInfo<LoadFromFEParam>& obj) {
@@ -18,7 +17,6 @@ std::string FrontEndLoadFromTest::getTestCaseName(const testing::TestParamInfo<L
 }
 
 void FrontEndLoadFromTest::SetUp() {
-    FrontEndTestUtils::setupTestEnv();
     m_fem = FrontEndManager();  // re-initialize after setting up environment
     m_param = GetParam();
 }
@@ -29,34 +27,34 @@ TEST_P(FrontEndLoadFromTest, testLoadFromFilePath) {
     std::string model_path = FrontEndTestUtils::make_model_path(m_param.m_modelsPath + m_param.m_file);
     std::vector<std::string> frontends;
     FrontEnd::Ptr fe;
-    ASSERT_NO_THROW(frontends = m_fem.get_available_front_ends());
-    ASSERT_NO_THROW(m_frontEnd = m_fem.load_by_model(model_path));
+    OV_ASSERT_NO_THROW(frontends = m_fem.get_available_front_ends());
+    OV_ASSERT_NO_THROW(m_frontEnd = m_fem.load_by_model(model_path));
     ASSERT_NE(m_frontEnd, nullptr);
 
-    ASSERT_NO_THROW(m_inputModel = m_frontEnd->load(model_path));
+    OV_ASSERT_NO_THROW(m_inputModel = m_frontEnd->load(model_path));
     ASSERT_NE(m_inputModel, nullptr);
 
-    std::shared_ptr<ngraph::Function> function;
-    ASSERT_NO_THROW(function = m_frontEnd->convert(m_inputModel));
-    ASSERT_NE(function, nullptr);
+    std::shared_ptr<ov::Model> model;
+    OV_ASSERT_NO_THROW(model = m_frontEnd->convert(m_inputModel));
+    ASSERT_NE(model, nullptr);
 }
 
 TEST_P(FrontEndLoadFromTest, testLoadFromFilePathWithExplicitVariants) {
     std::string model_path = FrontEndTestUtils::make_model_path(m_param.m_modelsPath + m_param.m_file);
     std::vector<std::string> frontends;
     FrontEnd::Ptr fe;
-    ASSERT_NO_THROW(frontends = m_fem.get_available_front_ends());
+    OV_ASSERT_NO_THROW(frontends = m_fem.get_available_front_ends());
 
     std::vector<ov::Any> variants;
     variants.emplace_back(model_path);
-    ASSERT_NO_THROW(m_frontEnd = m_fem.load_by_model(variants));
+    OV_ASSERT_NO_THROW(m_frontEnd = m_fem.load_by_model(variants));
     ASSERT_NE(m_frontEnd, nullptr);
 
-    ASSERT_NO_THROW(m_inputModel = m_frontEnd->load(variants));
+    OV_ASSERT_NO_THROW(m_inputModel = m_frontEnd->load(variants));
     ASSERT_NE(m_inputModel, nullptr);
 
     std::shared_ptr<ov::Model> function;
-    ASSERT_NO_THROW(function = m_frontEnd->convert(m_inputModel));
+    OV_ASSERT_NO_THROW(function = m_frontEnd->convert(m_inputModel));
     ASSERT_NE(function, nullptr);
 }
 
@@ -65,16 +63,16 @@ TEST_P(FrontEndLoadFromTest, testLoadFromTwoFiles) {
     std::string weights_path = FrontEndTestUtils::make_model_path(m_param.m_modelsPath + m_param.m_files[1]);
     std::vector<std::string> frontends;
     FrontEnd::Ptr fe;
-    ASSERT_NO_THROW(frontends = m_fem.get_available_front_ends());
-    ASSERT_NO_THROW(m_frontEnd = m_fem.load_by_model(model_path, weights_path));
+    OV_ASSERT_NO_THROW(frontends = m_fem.get_available_front_ends());
+    OV_ASSERT_NO_THROW(m_frontEnd = m_fem.load_by_model(model_path, weights_path));
     ASSERT_NE(m_frontEnd, nullptr);
 
-    ASSERT_NO_THROW(m_inputModel = m_frontEnd->load(model_path, weights_path));
+    OV_ASSERT_NO_THROW(m_inputModel = m_frontEnd->load(model_path, weights_path));
     ASSERT_NE(m_inputModel, nullptr);
 
-    std::shared_ptr<ngraph::Function> function;
-    function = m_frontEnd->convert(m_inputModel);
-    ASSERT_NE(function, nullptr);
+    std::shared_ptr<ov::Model> model;
+    model = m_frontEnd->convert(m_inputModel);
+    ASSERT_NE(model, nullptr);
 }
 
 TEST_P(FrontEndLoadFromTest, testLoadFromStream) {
@@ -83,16 +81,16 @@ TEST_P(FrontEndLoadFromTest, testLoadFromStream) {
     std::istream* is = &ifs;
     std::vector<std::string> frontends;
     FrontEnd::Ptr fe;
-    ASSERT_NO_THROW(frontends = m_fem.get_available_front_ends());
-    ASSERT_NO_THROW(m_frontEnd = m_fem.load_by_model(is));
+    OV_ASSERT_NO_THROW(frontends = m_fem.get_available_front_ends());
+    OV_ASSERT_NO_THROW(m_frontEnd = m_fem.load_by_model(is));
     ASSERT_NE(m_frontEnd, nullptr);
 
-    ASSERT_NO_THROW(m_inputModel = m_frontEnd->load(is));
+    OV_ASSERT_NO_THROW(m_inputModel = m_frontEnd->load(is));
     ASSERT_NE(m_inputModel, nullptr);
 
-    std::shared_ptr<ngraph::Function> function;
-    ASSERT_NO_THROW(function = m_frontEnd->convert(m_inputModel));
-    ASSERT_NE(function, nullptr);
+    std::shared_ptr<ov::Model> model;
+    OV_ASSERT_NO_THROW(model = m_frontEnd->convert(m_inputModel));
+    ASSERT_NE(model, nullptr);
 }
 
 TEST_P(FrontEndLoadFromTest, testLoadFromTwoStreams) {
@@ -105,14 +103,14 @@ TEST_P(FrontEndLoadFromTest, testLoadFromTwoStreams) {
 
     std::vector<std::string> frontends;
     FrontEnd::Ptr fe;
-    ASSERT_NO_THROW(frontends = m_fem.get_available_front_ends());
-    ASSERT_NO_THROW(m_frontEnd = m_fem.load_by_model(model_is, weights_is));
+    OV_ASSERT_NO_THROW(frontends = m_fem.get_available_front_ends());
+    OV_ASSERT_NO_THROW(m_frontEnd = m_fem.load_by_model(model_is, weights_is));
     ASSERT_NE(m_frontEnd, nullptr);
 
-    ASSERT_NO_THROW(m_inputModel = m_frontEnd->load(model_is, weights_is));
+    OV_ASSERT_NO_THROW(m_inputModel = m_frontEnd->load(model_is, weights_is));
     ASSERT_NE(m_inputModel, nullptr);
 
-    std::shared_ptr<ngraph::Function> function;
-    ASSERT_NO_THROW(function = m_frontEnd->convert(m_inputModel));
-    ASSERT_NE(function, nullptr);
+    std::shared_ptr<ov::Model> model;
+    OV_ASSERT_NO_THROW(model = m_frontEnd->convert(m_inputModel));
+    ASSERT_NE(model, nullptr);
 }

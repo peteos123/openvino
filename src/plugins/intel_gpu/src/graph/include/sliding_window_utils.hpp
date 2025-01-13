@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -10,7 +10,7 @@
 #include "openvino/core/coordinate_diff.hpp"
 #include "openvino/core/strides.hpp"
 
-#include "meta_utils.h"
+#include "intel_gpu/runtime/utils.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -75,7 +75,7 @@ tensor calc_sliding_window_output_range(const tensor&,
                                         const tensor&,
                                         bool,
                                         const tensor::value_type&) {
-    static_assert(meta::always_false<meta::val_tuple<swor_mode, RangeMode>>::value,
+    static_assert(cldnn::meta::always_false<cldnn::meta::val_tuple<swor_mode, RangeMode>>::value,
                   "Sliding window output range calculation mode is not supported. Please implement specialization "
                   "for new swor_mode.");
 
@@ -104,9 +104,9 @@ inline tensor calc_sliding_window_output_range<swor_mode::all>(const tensor& inp
     auto stride_y = stride.size() >= 2 ? stride[stride.size() - 2] : 1;
     auto stride_x = stride.size() >= 1 ? stride[stride.size() - 1] : 1;
 
-    tensor::value_type dilation_z = dilation.size() >= 3 ? dilation[dilation.size() - 3] : 1;
-    tensor::value_type dilation_y = dilation.size() >= 2 ? dilation[dilation.size() - 2] : 1;
-    tensor::value_type dilation_x = dilation.size() >= 1 ? dilation[dilation.size() - 1] : 1;
+    tensor::value_type dilation_z = dilation.size() >= 3 ? static_cast<int32_t>(dilation[dilation.size() - 3]) : 1;
+    tensor::value_type dilation_y = dilation.size() >= 2 ? static_cast<int32_t>(dilation[dilation.size() - 2]) : 1;
+    tensor::value_type dilation_x = dilation.size() >= 1 ? static_cast<int32_t>(dilation[dilation.size() - 1]) : 1;
 
     auto pad_z = pad.size() >= 3 ? pad[pad.size() - 3] : 0;
     auto pad_y = pad.size() >= 2 ? pad[pad.size() - 2] : 0;
@@ -161,9 +161,9 @@ inline tensor calc_sliding_window_output_range<swor_mode::exceed_once>(const ten
     int64_t stride_y = stride.size() >= 2 ? stride[stride.size() - 2] : 1;
     int64_t stride_x = stride.size() >= 1 ? stride[stride.size() - 1] : 1;
 
-    tensor::value_type dilation_z = dilation.size() >= 3 ? dilation[dilation.size() - 3] : 1;
-    tensor::value_type dilation_y = dilation.size() >= 2 ? dilation[dilation.size() - 2] : 1;
-    tensor::value_type dilation_x = dilation.size() >= 1 ? dilation[dilation.size() - 1] : 1;
+    tensor::value_type dilation_z = dilation.size() >= 3 ? static_cast<int32_t>(dilation[dilation.size() - 3]) : 1;
+    tensor::value_type dilation_y = dilation.size() >= 2 ? static_cast<int32_t>(dilation[dilation.size() - 2]) : 1;
+    tensor::value_type dilation_x = dilation.size() >= 1 ? static_cast<int32_t>(dilation[dilation.size() - 1]) : 1;
 
     int64_t pad_z = pad.size() >= 3 ? pad[pad.size() - 3] : 0;
     int64_t pad_y = pad.size() >= 2 ? pad[pad.size() - 2] : 0;
@@ -347,9 +347,9 @@ inline tensor calc_sliding_window_needed_input_range(const tensor& output_size,
     auto stride_y = stride.size() >= 2 ? stride[stride.size() - 2] : 1;
     auto stride_x = stride.size() >= 1 ? stride[stride.size() - 1] : 1;
 
-    tensor::value_type dilation_z = dilation.size() >= 3 ? dilation[dilation.size() - 3] : 1;
-    tensor::value_type dilation_y = dilation.size() >= 2 ? dilation[dilation.size() - 2] : 1;
-    tensor::value_type dilation_x = dilation.size() >= 1 ? dilation[dilation.size() - 1] : 1;
+    tensor::value_type dilation_z = dilation.size() >= 3 ? static_cast<int32_t>(dilation[dilation.size() - 3]) : 1;
+    tensor::value_type dilation_y = dilation.size() >= 2 ? static_cast<int32_t>(dilation[dilation.size() - 2]) : 1;
+    tensor::value_type dilation_x = dilation.size() >= 1 ? static_cast<int32_t>(dilation[dilation.size() - 1]) : 1;
 
     auto pad_z = pad.size() >= 3 ? pad[pad.size() - 3] : 0;
     auto pad_y = pad.size() >= 2 ? pad[pad.size() - 2] : 0;
@@ -428,17 +428,31 @@ inline padding calc_sliding_window_needed_input_padding(const layout& actual_inp
     }
 
     const auto& actual_data_size = actual_input_layout.get_tensor();
-    const auto& actual_lpad = actual_input_layout.data_padding.lower_size();
-    const auto& actual_upad = actual_input_layout.data_padding.upper_size();
+    const auto& actual_lpad = actual_input_layout.data_padding._lower_size;
+    const auto& actual_upad = actual_input_layout.data_padding._upper_size;
 
-    auto needed_upad = tensor::max(needed_size.sub(actual_data_size), actual_upad);
+    auto needed_upad = needed_size.sub(actual_data_size);
 
-    return padding(actual_lpad.sizes(),
-                   {actual_upad.batch[0],
-                    actual_upad.feature[0],
-                    needed_upad.spatial[0],
-                    needed_upad.spatial[1],
-                    needed_upad.spatial[2]});
+    auto spatial_rank = actual_input_layout.get_spatial_rank();
+    OPENVINO_ASSERT(spatial_rank > 0 && spatial_rank <= 3);
+    if (spatial_rank >= 3)
+        return padding({actual_lpad[0], actual_lpad[1], actual_lpad[2], actual_lpad[3], actual_lpad[4]},
+                       {actual_upad[0],
+                        actual_upad[1],
+                        std::max(needed_upad.spatial[2], actual_upad[2]),
+                        std::max(needed_upad.spatial[1], actual_upad[3]),
+                        std::max(needed_upad.spatial[0], actual_upad[4])});
+    else if (spatial_rank >= 2)
+        return padding({actual_lpad[0], actual_lpad[1], actual_lpad[2], actual_lpad[3]},
+                       {actual_upad[0],
+                        actual_upad[1],
+                        std::max(needed_upad.spatial[1], actual_upad[2]),
+                        std::max(needed_upad.spatial[0], actual_upad[3])});
+    else
+        return padding({actual_lpad[0], actual_lpad[1], actual_lpad[2]},
+                       {actual_upad[0],
+                        actual_upad[1],
+                        std::max(needed_upad.spatial[0], actual_upad[2])});
 }
 
 }  // namespace intel_gpu

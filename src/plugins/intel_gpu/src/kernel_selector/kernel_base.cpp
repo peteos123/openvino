@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -71,7 +71,7 @@ Datatype KernelBase::GetUnitType(const base_params& params) const {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // MakeBaseParamsJitConstants
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-JitConstants KernelBase::MakeBaseParamsJitConstants(const base_params& params) const {
+JitConstants KernelBase::MakeBaseParamsJitConstants(const base_params& params, bool add_tensor_definitions) const {
     auto unitType = GetUnitType(params);
 
     JitConstants jit{
@@ -87,42 +87,32 @@ JitConstants KernelBase::MakeBaseParamsJitConstants(const base_params& params) c
 
     // for activation function
     jit.Merge(MakeUnitTypeJitConstants(unitType));
-    jit.Merge(MakeActivationJitConstants(params.activations, unitType));
+    // Changed data type from unit type to output data type to fix the issue case that
+    // the activation function makes cl kernel build error when the output data type
+    // and unit type are different and activation param is existed
+    bool convert_input_to_output_dt = (params.outputs[0].GetDType() == Datatype::F32 && params.inputs[0].GetDType() == Datatype::F16);
+    // If input is FP16 and output is FP32, convert input to float before running activation function.
+    jit.Merge(MakeActivationJitConstants(params.activations, params.outputs[0].GetDType(), "", false, false, convert_input_to_output_dt));
 
-    size_t dyn_tensor_idx = 0;
-
-    for (size_t i = 0; i < params.inputs.size(); i++) {
-        jit.AddConstant(MakeJitConstant("INPUT" + toCodeString(i), params.inputs[i], dyn_tensor_idx));
-        if (params.inputs[i].is_dynamic())
-            dyn_tensor_idx++;
-    }
-
-    for (size_t i = 0; i < params.fused_ops.size(); i++) {
-        auto& fused_op_inputs = params.fused_ops[i].tensors;
-
-        for (auto& t : fused_op_inputs) {
-            if (t.is_dynamic())
-                dyn_tensor_idx++;
+    if (add_tensor_definitions) {
+        for (size_t i = 0; i < params.inputs.size(); i++) {
+            jit.AddConstant(MakeJitConstant("INPUT" + toCodeString(i), params.inputs[i]));
         }
-    }
 
-    // NOTE : until all cl kernels legacy is resolved, the outputs are to be OUTPUT, OUTPUT1, OUTPUT2, ...
-    jit.AddConstant(MakeJitConstant("OUTPUT", params.outputs[0], dyn_tensor_idx));
-    if (params.outputs[0].is_dynamic())
-            dyn_tensor_idx++;
-    for (size_t i = 1; i < params.outputs.size(); i++) {
-        jit.AddConstant(MakeJitConstant("OUTPUT" + toCodeString(i), params.outputs[i], dyn_tensor_idx));
-        if (params.outputs[0].is_dynamic())
-            dyn_tensor_idx++;
-    }
+        // NOTE : until all cl kernels legacy is resolved, the outputs are to be OUTPUT, OUTPUT1, OUTPUT2, ...
+        jit.AddConstant(MakeJitConstant("OUTPUT", params.outputs[0]));
+        for (size_t i = 1; i < params.outputs.size(); i++) {
+            jit.AddConstant(MakeJitConstant("OUTPUT" + toCodeString(i), params.outputs[i]));
+        }
 
-    if (dyn_tensor_idx > 0) {
-        jit.AddConstant(MakeJitConstant("IS_DYNAMIC", 1));
-        jit.AddConstant(MakeJitConstant("OPTIONAL_SHAPE_INFO_ARG", "__global const int* shape_info,"));
-        jit.AddConstant(MakeJitConstant("OPTIONAL_SHAPE_INFO_TENSOR", "shape_info,"));
-    } else {
-        jit.AddConstant(MakeJitConstant("OPTIONAL_SHAPE_INFO_ARG", ""));
-        jit.AddConstant(MakeJitConstant("OPTIONAL_SHAPE_INFO_TENSOR", ""));
+        if (params.is_shape_agnostic) {
+            jit.AddConstant(MakeJitConstant("IS_DYNAMIC", 1));
+            jit.AddConstant(MakeJitConstant("OPTIONAL_SHAPE_INFO_ARG", "__global const int* shape_info,"));
+            jit.AddConstant(MakeJitConstant("OPTIONAL_SHAPE_INFO_TENSOR", "shape_info,"));
+        } else {
+            jit.AddConstant(MakeJitConstant("OPTIONAL_SHAPE_INFO_ARG", ""));
+            jit.AddConstant(MakeJitConstant("OPTIONAL_SHAPE_INFO_TENSOR", ""));
+        }
     }
 
 #ifndef NDEBUG
@@ -140,7 +130,7 @@ bool KernelBase::IsSIMDSizeSupported(const EngineInfo &info, size_t simd_size) c
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// MakeBaseParamsJitConstants
+// MakeFusedOpsJitConstants
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 JitConstants KernelBase::MakeFusedOpsJitConstants(const kernel_selector::base_params &params,
                                                   const std::vector<FusedOpsConfiguration> &conf) const {
@@ -150,8 +140,10 @@ JitConstants KernelBase::MakeFusedOpsJitConstants(const kernel_selector::base_pa
     if (conf.empty())
         return jit;
 
-    if (params.fused_ops.size() == 1 && params.fused_ops[0].GetType() == KernelType::REORDER)
+    if (std::all_of(params.fused_ops.cbegin(), params.fused_ops.cend(),
+        [](fused_operation_desc desc) { return desc.GetType() == KernelType::REORDER; })) {
         return jit;
+    }
 
     try {
         for (auto& c : conf) {
@@ -213,26 +205,23 @@ JitConstants KernelBase::MakeFusedOpsDeclsJitConstants(const kernel_selector::ba
         return jit;
 
     std::string input_decls = "";
-
-    size_t dynamic_in_tensors_count = 0;
-    for (size_t i = 0; i < params.inputs.size(); i++) {
-        if (params.inputs[i].is_dynamic())
-            dynamic_in_tensors_count++;
-    }
+    std::string input_args = "";
 
     for (size_t i = 0; i < params.fused_ops.size(); i++) {
         auto fused_dep_codegen = FusedOpsCodeGenerator(params.fused_ops[i]);
         std::string op_type = fused_dep_codegen.GetTypeStr();
 
-        jit.Merge(fused_dep_codegen.MakeFusedTensorJitConstants(conf[0], dynamic_in_tensors_count));
+        jit.Merge(fused_dep_codegen.MakeFusedTensorJitConstants(conf[0]));
         jit.Merge(fused_dep_codegen.MakeInputDeclsJitConstants(conf[0]));
         if (!params.fused_ops[i].tensors.empty()) {
             std::string optional_comma = (!input_decls.empty() ? "," : "");
             input_decls += optional_comma + "\\\n\tFUSED_OP" + toCodeString(i) + "_DECLS";
+            input_args += optional_comma + "\\\n\tFUSED_OP" + toCodeString(i) + "_ARGS";
         }
     }
 
     jit.AddConstant(MakeJitConstant("FUSED_OPS_DECLS", input_decls));
+    jit.AddConstant(MakeJitConstant("FUSED_OPS_ARGS", input_args));
     jit.AddConstant(MakeJitConstant("HAS_FUSED_OPS", true));
     jit.AddConstant(MakeJitConstant("HAS_FUSED_OPS_DECLS", !input_decls.empty()));
 
@@ -252,7 +241,7 @@ std::vector<KernelBase::FusedOpType> KernelBase::GetSupportedFusedOps() const {
     return {};
 }
 
-DeviceFeaturesKey KernelBase::get_common_subgroups_device_features_key(const Params& params, const optional_params& /*options*/) const {
+DeviceFeaturesKey KernelBase::get_common_subgroups_device_features_key(const Params& params) const {
     DeviceFeaturesKey k;
 
     bool requires_blocked_read_write_char = false;

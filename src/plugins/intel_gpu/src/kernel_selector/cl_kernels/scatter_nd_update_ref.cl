@@ -1,5 +1,5 @@
 
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -34,16 +34,18 @@
 
 #define INDICES_MAX_DIM 6
 
-KERNEL(scatter_nd_update_ref)(const __global INPUT0_TYPE* data,
+KERNEL(scatter_nd_update_ref)(OPTIONAL_SHAPE_INFO_ARG
+                   const __global INPUT0_TYPE* data,
+#ifdef IS_SECOND_ITER
                    const __global INPUT1_TYPE* indices,
                    const __global INPUT2_TYPE* updates,
+#endif
                    __global OUTPUT_TYPE* output
 #if HAS_FUSED_OPS_DECLS
                    , FUSED_OPS_DECLS
 #endif
 )
 {
-
     const uint dim0 = get_global_id(0);
     const uint dim1 = get_global_id(1);
     const uint dim2 = get_global_id(2);
@@ -56,8 +58,9 @@ KERNEL(scatter_nd_update_ref)(const __global INPUT0_TYPE* data,
     const uint f = dim2 % OUTPUT_FEATURE_NUM;
     const uint b = dim2 / OUTPUT_FEATURE_NUM;
 
+    const uint input_idx = GET_UPDATES_INDEX(INPUT0, ORDER);
     const uint output_idx = GET_OUTPUT_INDEX(ORDER);
-    INPUT0_TYPE val = data[output_idx];
+    INPUT0_TYPE val = data[input_idx];
     #if HAS_FUSED_OPS
         FUSED_OPS_FIRST_KERNEL;
         output[output_idx] = TO_OUTPUT_TYPE(FUSED_OPS_RESULT_FIRST_KERNEL);

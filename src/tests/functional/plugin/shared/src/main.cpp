@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -11,12 +11,13 @@
 #include "set_device_name.hpp"
 
 int main(int argc, char *argv[]) {
-    FuncTestUtils::SkipTestsConfig::disable_tests_skipping = false;
+    ov::test::utils::disable_tests_skipping = false;
+    ov::test::utils::is_print_rel_influence_coef = false;
     bool print_custom_help = false;
     std::string outputFolderPath(".");
     for (int i = 0; i < argc; ++i) {
         if (std::string(argv[i]) == "--disable_tests_skipping") {
-            FuncTestUtils::SkipTestsConfig::disable_tests_skipping = true;
+            ov::test::utils::disable_tests_skipping = true;
         } else if (std::string(argv[i]) == "--extract_body") {
             ov::test::utils::OpSummary::setExtractBody(true);
         } else if (std::string(argv[i]) == "--help") {

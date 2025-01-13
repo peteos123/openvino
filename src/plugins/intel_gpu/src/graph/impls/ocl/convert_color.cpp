@@ -1,18 +1,12 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "convert_color_inst.h"
 #include "primitive_base.hpp"
-#include "impls/implementation_map.hpp"
-#include "kernel_selector_helper.h"
+
+#include "convert_color_inst.h"
 #include "convert_color/convert_color_kernel_selector.h"
 #include "convert_color/convert_color_kernel_base.h"
-#include "intel_gpu/runtime/error_handler.hpp"
-#include "data_inst.h"
-#include <vector>
-
-using namespace cldnn;
 
 namespace cldnn {
 namespace ocl {
@@ -20,12 +14,12 @@ struct convert_color_impl : typed_primitive_impl_ocl<convert_color> {
     using parent = typed_primitive_impl_ocl<convert_color>;
     using parent::parent;
     using kernel_selector_t = kernel_selector::convert_color_kernel_selector;
-    using kernel_params_t = std::pair<kernel_selector::convert_color_params, kernel_selector::convert_color_optional_params>;
+    using kernel_params_t = kernel_selector::convert_color_params;
 
-    DECLARE_OBJECT_TYPE_SERIALIZATION
+    DECLARE_OBJECT_TYPE_SERIALIZATION(cldnn::ocl::convert_color_impl)
 
     std::unique_ptr<primitive_impl> clone() const override {
-        return make_unique<convert_color_impl>(*this);
+        return make_deep_copy<convert_color_impl, kernel_params_t>(*this);
     }
 
 protected:
@@ -39,7 +33,6 @@ public:
         const auto& primitive = impl_param.typed_desc<convert_color>();
 
         auto params = get_default_params<kernel_selector::convert_color_params>(impl_param);
-        auto optional_params = get_default_optional_params<kernel_selector::convert_color_optional_params>(impl_param.get_program());
 
         for (size_t i = 1; i < impl_param.input_layouts.size(); ++i) {
             params.inputs.push_back(convert_data_tensor(impl_param.get_input_layout(i)));
@@ -49,7 +42,7 @@ public:
         params.output_color_format = static_cast<kernel_selector::color_format>(primitive->output_color_format);
         params.mem_type = static_cast<kernel_selector::memory_type>(primitive->mem_type);
 
-        return {params, optional_params};
+        return params;
     }
 };
 
@@ -60,9 +53,9 @@ attach_convert_color_impl::attach_convert_color_impl() {
         std::make_tuple(data_types::f32, format::nv12),
         std::make_tuple(data_types::f16, format::nv12),
         std::make_tuple(data_types::u8,  format::nv12),
-        std::make_tuple(data_types::f32, format::byxf),
-        std::make_tuple(data_types::f16, format::byxf),
-        std::make_tuple(data_types::u8,  format::byxf),
+        std::make_tuple(data_types::f32, format::bfyx),
+        std::make_tuple(data_types::f16, format::bfyx),
+        std::make_tuple(data_types::u8,  format::bfyx),
     });
 }
 
@@ -71,3 +64,4 @@ attach_convert_color_impl::attach_convert_color_impl() {
 }  // namespace cldnn
 
 BIND_BINARY_BUFFER_WITH_TYPE(cldnn::ocl::convert_color_impl)
+BIND_BINARY_BUFFER_WITH_TYPE(cldnn::convert_color)

@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -38,8 +38,9 @@ ParamsKey ConvolutionKernel_Ref::GetSupportedKey() const {
     k.EnableBiasPerOutput();
     k.EnableNonBiasTerm();
     k.EnableBatching();
-    k.DisableTuning();
     k.EnableGroupedConvolution();
+
+    k.EnableDynamicShapesSupport();
 
     k.EnableQuantization(QuantizationType::SYMMETRIC);
     k.EnableQuantization(QuantizationType::ASYMMETRIC_DATA);
@@ -48,8 +49,8 @@ ParamsKey ConvolutionKernel_Ref::GetSupportedKey() const {
     return k;
 }
 
-KernelsData ConvolutionKernel_Ref::GetKernelsData(const Params& params, const optional_params& options) const {
-    return GetTunedKernelsDataByIndex(params, options);
+KernelsData ConvolutionKernel_Ref::GetKernelsData(const Params& params) const {
+    return GetTunedKernelsDataByIndex(params);
 }
 
 JitConstants ConvolutionKernel_Ref::GetJitConstants(const convolution_params& params, const DispatchData& dispatchData) const {
@@ -107,12 +108,12 @@ ConvolutionKernelBase::DispatchData ConvolutionKernel_Ref::SetDefault(const conv
     return dispatchData;
 }
 
-KernelsPriority ConvolutionKernel_Ref::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority ConvolutionKernel_Ref::GetKernelsPriority(const Params& /*params*/) const {
     return DONT_USE_IF_HAVE_SOMETHING_ELSE;
 }
 
-bool ConvolutionKernel_Ref::Validate(const Params& params, const optional_params& options) const {
-    if (!ConvolutionKernelBase::Validate(params, options))
+bool ConvolutionKernel_Ref::Validate(const Params& params) const {
+    if (!ConvolutionKernelBase::Validate(params))
         return false;
 
     const auto& conv_params = static_cast<const convolution_params&>(params);
@@ -122,7 +123,8 @@ bool ConvolutionKernel_Ref::Validate(const Params& params, const optional_params
 
     // int8/uint8 inputs (quantization case) require additional checks
     // require some additional checks.
-    if (input_type == output_type && input_type != Datatype::UINT8 && input_type != Datatype::INT8)
+    if (input_type != Datatype::UINT8 && input_type != Datatype::INT8 &&
+        output_type != Datatype::UINT8 && output_type != Datatype::INT8)
         return true;
 
     // (u)int8 input + fp weights

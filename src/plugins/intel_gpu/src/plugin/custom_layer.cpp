@@ -1,33 +1,35 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "intel_gpu/plugin/custom_layer.hpp"
+
 #include "intel_gpu/plugin/simple_math.hpp"
 #include "intel_gpu/runtime/itt.hpp"
+#include "openvino/util/xml_parse_utils.hpp"
 
-#include "xml_parse_utils.h"
-#include <description_buffer.hpp>
-#include <map>
-#include <fstream>
-#include <streambuf>
 #include <climits>
+#include <fstream>
+#include <map>
+#include <streambuf>
 
 #ifdef _WIN32
+# ifndef NOMINMAX
+#  define NOMINMAX
+# endif
 # include <windows.h>
 #endif
 
-using namespace InferenceEngine;
-using namespace XMLParseUtils;
+using namespace ov::util::pugixml;
 
 #define CheckAndReturnError(cond, errorMsg) \
     if (cond) { std::stringstream ss; ss << errorMsg; m_ErrorMessage = ss.str(); return; }
 #define CheckNodeTypeAndReturnError(node, type) \
     CheckAndReturnError((std::string(node.name()).compare(type)), "Wrong node! expected: " << #type << " found: " << node.name())
 #define CheckStrAttrAndReturnError(node, attr, value) \
-    CheckAndReturnError(GetStrAttr(node, attr, "").compare(value), "Wrong attribute value! expected: " << value << " found: " << GetStrAttr(node, attr, ""))
+    CheckAndReturnError(get_str_attr(node, attr, "").compare(value), "Wrong attribute value! expected: " << value << " found: " << get_str_attr(node, attr, ""))
 #define CheckIntAttrAndReturnError(node, attr, value) \
-    CheckAndReturnError(GetIntAttr(node, attr, -1) != (value), "Wrong attribute value! expected: " << value << " found: " << GetIntAttr(node, attr, -1))
+    CheckAndReturnError(get_int_attr(node, attr, -1) != (value), "Wrong attribute value! expected: " << value << " found: " << get_int_attr(node, attr, -1))
 
 namespace ov {
 namespace intel_gpu {
@@ -37,7 +39,7 @@ void CustomLayer::LoadSingleLayer(const pugi::xml_node & node) {
     CheckNodeTypeAndReturnError(node, "CustomLayer");
     CheckStrAttrAndReturnError(node, "type", "SimpleGPU");
     CheckIntAttrAndReturnError(node, "version", 1);
-    m_layerName = GetStrAttr(node, "name", "");
+    m_layerName = get_str_attr(node, "name", "");
     CheckAndReturnError(m_layerName.length() == 0, "Missing Layer name in CustomLayer");
 
     // Process child nodes
@@ -50,13 +52,13 @@ void CustomLayer::LoadSingleLayer(const pugi::xml_node & node) {
 void CustomLayer::ProcessKernelNode(const pugi::xml_node & node) {
     CheckNodeTypeAndReturnError(node, "Kernel");
     CheckAndReturnError(m_kernelSource.length() > 0, "Multiple definition of Kernel");
-    m_kernelEntry = GetStrAttr(node, "entry", "");
-    CheckAndReturnError(m_kernelEntry.length() == 0, "No Kernel entry in layer: " << GetStrAttr(node.parent(), "name"));
+    m_kernelEntry = get_str_attr(node, "entry", "");
+    CheckAndReturnError(m_kernelEntry.length() == 0, "No Kernel entry in layer: " << get_str_attr(node.parent(), "name"));
 
     // Handle Source nodes
     FOREACH_CHILD(sourceNode, node, "Source") {
         // open file
-        std::string filename = m_configDir + "/" + GetStrAttr(sourceNode, "filename", "");
+        std::string filename = m_configDir + "/" + get_str_attr(sourceNode, "filename", "");
         std::ifstream inputFile(filename);
         CheckAndReturnError(!inputFile.is_open(), "Couldn't open kernel file: " << filename);
 
@@ -77,11 +79,11 @@ void CustomLayer::ProcessKernelNode(const pugi::xml_node & node) {
     // Handle Define nodes
     FOREACH_CHILD(defineNode, node, "Define") {
         KernelDefine kd;
-        kd.name = GetStrAttr(defineNode, "name", "");
+        kd.name = get_str_attr(defineNode, "name", "");
         CheckAndReturnError((kd.name.length() == 0), "Missing name for define node");
-        kd.param = GetStrAttr(defineNode, "param", "");
-        kd.default_value = GetStrAttr(defineNode, "default", "");
-        std::string type = GetStrAttr(defineNode, "type", "");
+        kd.param = get_str_attr(defineNode, "param", "");
+        kd.default_value = get_str_attr(defineNode, "default", "");
+        std::string type = get_str_attr(defineNode, "type", "");
         if (type.compare("int[]") == 0 || type.compare("float[]") == 0) {
             kd.prefix = "(" + type + ") {";
             kd.postfix = "}";
@@ -94,13 +96,13 @@ void CustomLayer::ProcessBuffersNode(const pugi::xml_node & node) {
     CheckNodeTypeAndReturnError(node, "Buffers");
     FOREACH_CHILD(tensorNode, node, "Tensor") {
         KerenlParam kp;
-        kp.format = FormatFromString(GetStrAttr(tensorNode, "format", "BFYX"));
-        CheckAndReturnError(kp.format == cldnn::format::format_num, "Tensor node has an invalid format: " << GetStrAttr(tensorNode, "format"));
-        kp.paramIndex = GetIntAttr(tensorNode, "arg-index", -1);
+        kp.format = FormatFromString(get_str_attr(tensorNode, "format", "BFYX"));
+        CheckAndReturnError(kp.format == cldnn::format::format_num, "Tensor node has an invalid format: " << get_str_attr(tensorNode, "format"));
+        kp.paramIndex = get_int_attr(tensorNode, "arg-index", -1);
         CheckAndReturnError(kp.paramIndex == -1, "Tensor node has no arg-index");
-        kp.portIndex = GetIntAttr(tensorNode, "port-index", -1);
+        kp.portIndex = get_int_attr(tensorNode, "port-index", -1);
         CheckAndReturnError(kp.portIndex == -1, "Tensor node has no port-index");
-        std::string typeStr = GetStrAttr(tensorNode, "type");
+        std::string typeStr = get_str_attr(tensorNode, "type");
         if (typeStr.compare("input") == 0) {
             kp.type = ParamType::Input;
         } else if (typeStr.compare("output") == 0) {
@@ -113,9 +115,9 @@ void CustomLayer::ProcessBuffersNode(const pugi::xml_node & node) {
     FOREACH_CHILD(dataNode, node, "Data") {
         KerenlParam kp;
         kp.type = ParamType::Data;
-        kp.paramIndex = GetIntAttr(dataNode, "arg-index", -1);
+        kp.paramIndex = get_int_attr(dataNode, "arg-index", -1);
         CheckAndReturnError(kp.paramIndex == -1, "Data node has no arg-index");
-        kp.blobName = GetStrAttr(dataNode, "name", "");
+        kp.blobName = get_str_attr(dataNode, "name", "");
         CheckAndReturnError(kp.blobName.empty(), "Data node has no name");
         m_kernelParams.push_back(kp);
     }
@@ -127,7 +129,7 @@ void CustomLayer::ProcessCompilerOptionsNode(const pugi::xml_node & node) {
     }
     CheckNodeTypeAndReturnError(node, "CompilerOptions");
     CheckAndReturnError(m_compilerOptions.length() > 0, "Multiple definition of CompilerOptions");
-    m_compilerOptions = GetStrAttr(node, "options", "");
+    m_compilerOptions = get_str_attr(node, "options", "");
 }
 
 void CustomLayer::ProcessWorkSizesNode(const pugi::xml_node & node) {
@@ -195,7 +197,7 @@ bool CustomLayer::IsLegalSizeRule(const std::string & rule) {
 
     try {
         expr.Evaluate();
-    } catch (...) {
+    } catch (std::exception&) {
         return false;
     }
     return true;
@@ -234,8 +236,7 @@ void CustomLayer::LoadFromFile(const std::string configFile, CustomLayerMap& cus
             // config file might not exist - like global config, for example
             return;
         } else {
-            IE_THROW() << "Error loading custom layer configuration file: " << configFile << ", " << res.description()
-                << " at offset " << res.offset;
+            OPENVINO_THROW("Error loading custom layer configuration file: ", configFile, ", ", res.description(), " at offset ", res.offset);
         }
     }
 
@@ -245,10 +246,11 @@ void CustomLayer::LoadFromFile(const std::string configFile, CustomLayerMap& cus
 #elif __linux__
     char path[PATH_MAX];
     char* abs_path_ptr = realpath(configFile.c_str(), path);
+#else
+#error "Intel GPU plugin: unknown target system"
 #endif
     if (abs_path_ptr == nullptr) {
-        IE_THROW() << "Error loading custom layer configuration file: " << configFile << ", "
-                           << "Can't get canonicalized absolute pathname.";
+        OPENVINO_THROW("Error loading custom layer configuration file: ", configFile, ", ", "Can't get canonicalized absolute pathname.");
     }
 
     std::string abs_file_name(path);
@@ -263,8 +265,7 @@ void CustomLayer::LoadFromFile(const std::string configFile, CustomLayerMap& cus
         // path is absolute
         dir_path = abs_file_name.substr(0, dir_split_pos);
     } else {
-        IE_THROW() << "Error loading custom layer configuration file: " << configFile << ", "
-                           << "Path is not valid";
+        OPENVINO_THROW("Error loading custom layer configuration file: ", configFile, ", ", "Path is not valid");
     }
 
     for (auto r = xmlDoc.document_element(); r; r = r.next_sibling()) {
@@ -272,7 +273,7 @@ void CustomLayer::LoadFromFile(const std::string configFile, CustomLayerMap& cus
         layer->LoadSingleLayer(r);
         if (layer->Error()) {
             customLayers.clear();
-            IE_THROW() << layer->m_ErrorMessage;
+            OPENVINO_THROW(layer->m_ErrorMessage);
         } else {
             customLayers[layer->Name()] = layer;
         }

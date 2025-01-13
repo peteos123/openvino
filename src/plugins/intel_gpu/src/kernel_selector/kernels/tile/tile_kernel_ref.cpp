@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -25,10 +25,11 @@ ParamsKey TileKernelRef::GetSupportedKey() const {
     k.EnableTensorOffset();
     k.EnableTensorPitches();
     k.EnableBatching();
+    k.EnableDynamicShapesSupport();
     return k;
 }
 
-CommonDispatchData TileKernelRef::SetDefault(const tile_params& params, const optional_params&) const {
+CommonDispatchData TileKernelRef::SetDefault(const tile_params& params) const {
     CommonDispatchData dispatchData;
     auto in_layout = params.inputs[0].GetLayout();
     auto out_layout = params.outputs[0].GetLayout();
@@ -49,25 +50,39 @@ JitConstants TileKernelRef::GetJitConstants(const tile_params& params) const {
     return jit;
 }
 
-KernelsData TileKernelRef::GetKernelsData(const Params& params, const optional_params& options) const {
+void TileKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
+    kd.update_dispatch_data_func = [this](const Params& params, KernelData& kd) {
+        const auto& prim_params = static_cast<const tile_params&>(params);
+        auto dispatchData = SetDefault(prim_params);
+        OPENVINO_ASSERT(kd.kernels.size() == 1, "[GPU] Invalid kernels size for update dispatch data func");
+        kd.kernels[0].params.workGroups.global = dispatchData.gws;
+        kd.kernels[0].params.workGroups.local = dispatchData.lws;
+        kd.kernels[0].skip_execution = KernelData::SkipKernelExecution(prim_params);
+    };
+}
+
+KernelsData TileKernelRef::GetKernelsData(const Params& params) const {
     assert(params.GetType() == KernelType::TILE);
 
     KernelData kd = KernelData::Default<tile_params>(params);
     tile_params& newParams = *static_cast<tile_params*>(kd.params.get());
 
-    auto dispatchData = SetDefault(newParams, options);
-    auto entry_point = GetEntryPoint(kernelName, newParams.layerID, params, options);
+    auto dispatchData = SetDefault(newParams);
+    auto entry_point = GetEntryPoint(kernelName, newParams.layerID, params);
     auto cldnn_jit = GetJitConstants(newParams);
     auto jit = CreateJit(kernelName, cldnn_jit, entry_point);
 
+    GetUpdateDispatchDataFunc(kd);
+
     auto& kernel = kd.kernels[0];
 
-    FillCLKernelData(kernel, dispatchData, params.engineInfo, kernelName, jit, entry_point);
+    FillCLKernelData(kernel, dispatchData, params.engineInfo, kernelName, jit, entry_point,
+                     EXE_MODE_DEFAULT, false, false, 1, 0, 1, newParams.is_shape_agnostic);
 
     return {kd};
 }
 
-KernelsPriority TileKernelRef::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority TileKernelRef::GetKernelsPriority(const Params& /*params*/) const {
     return DONT_USE_IF_HAVE_SOMETHING_ELSE;
 }
 }  // namespace kernel_selector

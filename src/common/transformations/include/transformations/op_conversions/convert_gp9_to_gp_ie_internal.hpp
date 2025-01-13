@@ -4,8 +4,8 @@
 
 #pragma once
 
-#include <openvino/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
+#include "openvino/pass/matcher_pass.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 namespace pass {
@@ -17,12 +17,6 @@ class TRANSFORMATIONS_API ConvertGP9ToGPIEInternal;
 
 class ov::pass::ConvertGP9ToGPIEInternal : public ov::pass::MatcherPass {
 public:
-    OPENVINO_RTTI("ConvertGP9ToGPIEInternal", "0");
+    OPENVINO_MATCHER_PASS_RTTI("ConvertGP9ToGPIEInternal");
     ConvertGP9ToGPIEInternal();
 };
-
-namespace ngraph {
-namespace pass {
-using ov::pass::ConvertGP9ToGPIEInternal;
-}  // namespace pass
-}  // namespace ngraph

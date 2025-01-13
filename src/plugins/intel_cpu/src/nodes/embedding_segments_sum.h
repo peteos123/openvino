@@ -1,31 +1,27 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <ie_common.h>
-#include <node.h>
-#include "embedding_bag_sum.h"
-#include <string>
-#include <memory>
-#include <vector>
+#include "embedding_bag.h"
+#include "node.h"
 
 namespace ov {
 namespace intel_cpu {
 namespace node {
 
-class EmbeddingSegmentsSum : public Node, public EmbeddingBagSum {
+class EmbeddingSegmentsSum : public Node, public EmbeddingBag {
 public:
-    EmbeddingSegmentsSum(const std::shared_ptr<ngraph::Node>& op, const GraphContext::CPtr context);
+    EmbeddingSegmentsSum(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr context);
 
-    void getSupportedDescriptors() override {};
+    void getSupportedDescriptors() override{};
     void initSupportedPrimitiveDescriptors() override;
     void execute(dnnl::stream strm) override;
     bool created() const override;
 
     bool isExecutable() const override;
-    static bool isSupportedOperation(const std::shared_ptr<const ngraph::Node>& op, std::string& errorMessage) noexcept;
+    static bool isSupportedOperation(const std::shared_ptr<const ov::Node>& op, std::string& errorMessage) noexcept;
 
 protected:
     void prepareParams() override;
@@ -34,13 +30,13 @@ protected:
 
 private:
     void initFromInputs() override;
-    void getIndices(int embIndex, const int*& indices, size_t& size, int& weightsIdx, bool& withWeight) override;
+    void getIndices(size_t embIndex, const int*& indices, size_t& size, int& weightsIdx, bool& withWeight) override;
     int32_t getNumSegments() const;
 
     static constexpr size_t SEGMENT_ID_IDX = 2lu;
     static constexpr size_t NUM_SEGMENTS_IDX = 3lu;
 
-    int lastNumSegments_ = 0;
+    int32_t lastNumSegments_ = 0;
 
     const int* indices_ = nullptr;
     const int* segmentIds_ = nullptr;
@@ -49,6 +45,6 @@ private:
     size_t indicesSize_ = 0;
 };
 
-}   // namespace node
-}   // namespace intel_cpu
-}   // namespace ov
+}  // namespace node
+}  // namespace intel_cpu
+}  // namespace ov

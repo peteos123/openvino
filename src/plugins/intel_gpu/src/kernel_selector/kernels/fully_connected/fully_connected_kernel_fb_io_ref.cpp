@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -34,16 +34,31 @@ JitConstants FullyConnected_fb_io_ref::GetJitConstants(const fully_connected_par
     return jit;
 }
 
-KernelsData FullyConnected_fb_io_ref::GetKernelsData(const Params& params, const optional_params& optParams) const {
+bool FullyConnected_fb_io_ref::Validate(const Params& p) const {
+    if (!FullyConnectedKernelBase::Validate(p)) {
+        return false;
+    }
+
+    const auto& params = static_cast<const fully_connected_params&>(p);
+
+    if (!params.bias.empty()) {
+        if (params.inputs[0].GetDType() != params.bias[0].GetDType()) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+KernelsData FullyConnected_fb_io_ref::GetKernelsData(const Params& params) const {
     // TODO: it should be fb_io. but the original code use this kernel with yxfb and yxio
     //       (fb == fyxb flatten fyx, not yxfb flatten yxf).
     //       the order of the add operation cause some numeric changes. in order to avoid them right now we use
     //       yxfb/oiyx instead.
-    // return GetCommonKernelsData(params, optParams, DataLayout::fb, WeightsLayout::io, FORCE_PRIORITY_6);
+    // return GetCommonKernelsData(params,  DataLayout::fb, WeightsLayout::io, FORCE_PRIORITY_6);
     KernelsData res = {};
     for (size_t i = 0; i < autoTuneOptions.size(); i++) {
         KernelsData kd = GetTunedKernelsDataByIndex(params,
-                                                    optParams,
                                                     DataLayout::yxfb,
                                                     WeightsLayout::yxio,
                                                     static_cast<int>(i));
@@ -54,7 +69,7 @@ KernelsData FullyConnected_fb_io_ref::GetKernelsData(const Params& params, const
     return res;
 }
 
-KernelsPriority FullyConnected_fb_io_ref::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority FullyConnected_fb_io_ref::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_6;
 }
 }  // namespace kernel_selector

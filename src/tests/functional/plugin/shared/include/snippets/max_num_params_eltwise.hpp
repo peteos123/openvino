@@ -11,14 +11,14 @@ namespace test {
 namespace snippets {
 
 typedef std::tuple<
-        ov::Shape,                   // Input Shape All shapes are replicated
+        InputShape,                  // Input Shape All shapes are replicated
         size_t,                      // Expected num nodes
         size_t,                      // Expected num subgraphs
         std::string                  // Target Device
 > MaxNumParamsEltwiseParams;
 
 class MaxNumParamsEltwise : public testing::WithParamInterface<ov::test::snippets::MaxNumParamsEltwiseParams>,
-                            virtual public ov::test::SnippetsTestsCommon {
+                            virtual public SnippetsTestsCommon {
 public:
     static std::string getTestCaseName(testing::TestParamInfo<ov::test::snippets::MaxNumParamsEltwiseParams> obj);
 

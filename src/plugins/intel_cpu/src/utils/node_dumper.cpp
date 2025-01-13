@@ -1,21 +1,18 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 #ifdef CPU_DEBUG_CAPS
 
-#include "node_dumper.h"
+#    include "node_dumper.h"
 
-#include "utils/debug_caps_config.h"
-#include <node.h>
-#include "ie_common.h"
-#include "utils/blob_dump.h"
-#include "memory_desc/cpu_memory_desc_utils.h"
+#    include <regex>
+#    include <sstream>
+#    include <string>
 
-#include <regex>
-#include <sstream>
-#include <string>
-
-using namespace InferenceEngine;
+#    include "memory_desc/cpu_memory_desc_utils.h"
+#    include "node.h"
+#    include "utils/blob_dump.h"
+#    include "utils/debug_caps_config.h"
 
 namespace ov {
 namespace intel_cpu {
@@ -33,19 +30,19 @@ static bool shouldBeDumped(const NodePtr& node, const DebugCapsConfig& config, c
     if (dumpFilters.empty())
         return false;
 
-    if (dumpFilters.count(DebugCapsConfig::FILTER::BY_PORTS)) { // filter by ports configured
+    if (dumpFilters.count(DebugCapsConfig::FILTER::BY_PORTS)) {  // filter by ports configured
         if (dumpFilters.at(DebugCapsConfig::FILTER::BY_PORTS) != "ALL" &&
             portsKind != dumpFilters.at(DebugCapsConfig::FILTER::BY_PORTS))
             return false;
     }
 
-    if (dumpFilters.count(DebugCapsConfig::FILTER::BY_EXEC_ID)) { // filter by exec id configured
+    if (dumpFilters.count(DebugCapsConfig::FILTER::BY_EXEC_ID)) {  // filter by exec id configured
         std::stringstream ss(dumpFilters.at(DebugCapsConfig::FILTER::BY_EXEC_ID));
         int id;
         bool matched = false;
 
         while (ss >> id) {
-            if (node->getExecIndex() == id) {// exec id matches
+            if (node->getExecIndex() == id) {  // exec id matches
                 matched = true;
                 break;
             }
@@ -55,13 +52,13 @@ static bool shouldBeDumped(const NodePtr& node, const DebugCapsConfig& config, c
             return false;
     }
 
-    if (dumpFilters.count(DebugCapsConfig::FILTER::BY_TYPE)) { // filter by type configured
+    if (dumpFilters.count(DebugCapsConfig::FILTER::BY_TYPE)) {  // filter by type configured
         std::stringstream ss(dumpFilters.at(DebugCapsConfig::FILTER::BY_TYPE));
         std::string type;
         bool matched = false;
 
         while (ss >> type) {
-            if (NameFromType(node->getType()) == type) {// type does not match
+            if (NameFromType(node->getType()) == type) {  // type does not match
                 matched = true;
                 break;
             }
@@ -71,9 +68,11 @@ static bool shouldBeDumped(const NodePtr& node, const DebugCapsConfig& config, c
             return false;
     }
 
-    if (dumpFilters.count(DebugCapsConfig::FILTER::BY_NAME)) { // filter by name configured
-        if (dumpFilters.at(DebugCapsConfig::FILTER::BY_NAME) != "*" && // to have 'single char' option for matching all the names
-            !std::regex_match(node->getName(), std::regex(dumpFilters.at(DebugCapsConfig::FILTER::BY_NAME)))) // name does not match
+    if (dumpFilters.count(DebugCapsConfig::FILTER::BY_NAME)) {  // filter by name configured
+        if (dumpFilters.at(DebugCapsConfig::FILTER::BY_NAME) !=
+                "*" &&  // to have 'single char' option for matching all the names
+            !std::regex_match(node->getName(),
+                              std::regex(dumpFilters.at(DebugCapsConfig::FILTER::BY_NAME))))  // name does not match
             return false;
     }
 
@@ -91,7 +90,7 @@ static void dump(const BlobDumper& bd, const std::string& file, const DebugCapsC
         break;
     }
     default:
-        IE_THROW() << "NodeDumper: Unknown dump format";
+        OPENVINO_THROW("NodeDumper: Unknown dump format");
     }
 }
 
@@ -106,13 +105,10 @@ static void dumpInternalBlobs(const NodePtr& node, const DebugCapsConfig& config
         std::string file_name = NameFromType(node->getType()) + "_" + nodeName + "_blb" + std::to_string(i) + ".ieb";
         auto dump_file = config.blobDumpDir + "/#" + std::to_string(node->getExecIndex()) + "_" + file_name;
 
-        TensorDesc desc = blb->getTensorDesc();
-        if (desc.getPrecision() == Precision::BIN)
+        if (blb->getDesc().getPrecision() == ov::element::u1)
             continue;
 
-        MemoryPtr memory = std::make_shared<Memory>(node->getEngine());
-        memory->Create(MemoryDescUtils::convertToDnnlBlockedMemoryDesc(desc), blb->buffer());
-        BlobDumper dumper(memory);
+        BlobDumper dumper(blb);
         dump(dumper, dump_file, config);
     }
 }
@@ -141,7 +137,7 @@ void dumpInputBlobs(const NodePtr& node, const DebugCapsConfig& config, int coun
         std::cout << "Dump inputs: " << dump_file << std::endl;
 
         auto& desc = prEdge->getMemory().getDesc();
-        if (desc.getPrecision() == Precision::BIN)
+        if (desc.getPrecision() == ov::element::u1)
             continue;
 
         BlobDumper dumper(prEdge->getMemoryPtr());
@@ -174,7 +170,7 @@ void dumpOutputBlobs(const NodePtr& node, const DebugCapsConfig& config, int cou
         std::cout << "Dump outputs:  " << dump_file << std::endl;
 
         auto& desc = childEdge->getMemory().getDesc();
-        if (desc.getPrecision() == Precision::BIN)
+        if (desc.getPrecision() == ov::element::u1)
             continue;
 
         BlobDumper dumper(childEdge->getMemoryPtr());
@@ -182,7 +178,7 @@ void dumpOutputBlobs(const NodePtr& node, const DebugCapsConfig& config, int cou
     }
 }
 
-}   // namespace intel_cpu
-}   // namespace ov
+}  // namespace intel_cpu
+}  // namespace ov
 
-#endif // CPU_DEBUG_CAPS
+#endif  // CPU_DEBUG_CAPS

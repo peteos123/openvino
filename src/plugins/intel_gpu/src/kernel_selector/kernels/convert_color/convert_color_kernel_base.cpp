@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -8,9 +8,8 @@
 
 namespace kernel_selector {
 
-bool ConvertColorKernelBase::Validate(const Params& p, const optional_params& o) const {
-    if (p.GetType() != KernelType::CONVERT_COLOR ||
-        o.GetType() != KernelType::CONVERT_COLOR) {
+bool ConvertColorKernelBase::Validate(const Params& p) const {
+    if (p.GetType() != KernelType::CONVERT_COLOR) {
         return false;
     }
 
@@ -22,13 +21,13 @@ bool ConvertColorKernelBase::Validate(const Params& p, const optional_params& o)
     return true;
 }
 
-CommonDispatchData ConvertColorKernelBase::SetDefault(const convert_color_params& params, const optional_params&) const {
+CommonDispatchData ConvertColorKernelBase::SetDefault(const convert_color_params& params) const {
     CommonDispatchData dispatchData;
     const auto& out = params.outputs[0];
     auto in_layout = params.inputs[0].GetLayout();
     auto out_layout = params.outputs[0].GetLayout();
 
-    dispatchData.gws = { out.Batch().v, out.Y().v, out.X().v };
+    dispatchData.gws = { out.Batch().v, out.Feature().v, out.Y().v };
     dispatchData.lws = GetOptimalLocalWorkGroupSizes(dispatchData.gws, params.engineInfo, in_layout, out_layout);
 
     return dispatchData;
@@ -47,7 +46,7 @@ JitConstants ConvertColorKernelBase::GetJitConstants(const convert_color_params&
             jit.AddConstant(MakeJitConstant("CONVERT_FROM_I420", ""));
             break;
         default:
-            IE_THROW() << "Not supported input color format";
+            OPENVINO_THROW("Not supported input color format");
     }
 
     switch (params.output_color_format) {
@@ -58,7 +57,7 @@ JitConstants ConvertColorKernelBase::GetJitConstants(const convert_color_params&
             jit.AddConstant(MakeJitConstant("CONVERT_TO_BGR", ""));
             break;
         default:
-            IE_THROW() << "Not supported output color format";
+            OPENVINO_THROW("Not supported output color format");
     }
 
     switch (params.mem_type) {
@@ -69,26 +68,26 @@ JitConstants ConvertColorKernelBase::GetJitConstants(const convert_color_params&
             jit.AddConstant(MakeJitConstant("SURFACE_MEM", ""));
             break;
         default:
-            IE_THROW() << "Not supported memory type";
+            OPENVINO_THROW("Not supported memory type");
     }
     return jit;
 }
 
-KernelsData ConvertColorKernelBase::GetCommonKernelsData(const Params& params, const optional_params& options) const {
+KernelsData ConvertColorKernelBase::GetCommonKernelsData(const Params& params) const {
     KernelData kd = KernelData::Default<convert_color_params>(params);
     const auto& prim_params = static_cast<const convert_color_params&>(params);
 
-    if (!Validate(params, options)) {
+    if (!Validate(params)) {
         return {};
     }
 
-    auto dispatchData = SetDefault(prim_params, options);
-    auto entry_point = GetEntryPoint(kernelName, prim_params.layerID, params, options);
+    auto dispatchData = SetDefault(prim_params);
+    auto entry_point = GetEntryPoint(kernelName, prim_params.layerID, params);
     auto cldnn_jit = GetJitConstants(prim_params);
     auto jit = CreateJit(kernelName, cldnn_jit, entry_point);
 
     auto& kernel = kd.kernels[0];
-    size_t number_of_inputs = prim_params.inputs.size();
+    uint32_t number_of_inputs = static_cast<uint32_t>(prim_params.inputs.size());
     FillCLKernelData(kernel, dispatchData, params.engineInfo, kernelName, jit, entry_point,
                      "", false, false, number_of_inputs);
 

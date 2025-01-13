@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -7,8 +7,8 @@
 #include <map>
 #include <ostream>
 
+#include "openvino/core/except.hpp"
 #include "intel_gpu/primitives/primitive.hpp"
-#include "intel_gpu/runtime/tensor.hpp"
 
 namespace cldnn {
 
@@ -18,6 +18,8 @@ enum class impl_types : uint8_t {
     common = 1 << 1,
     ocl = 1 << 2,
     onednn = 1 << 3,
+    sycl = 1 << 4,
+    cm = 1 << 5,
     any = 0xFF,
 };
 
@@ -42,11 +44,33 @@ inline std::ostream& operator<<(std::ostream& out, const impl_types& impl_type) 
         case impl_types::common: out << "common"; break;
         case impl_types::ocl: out << "ocl"; break;
         case impl_types::onednn: out << "onednn"; break;
+        case impl_types::cm: out << "cm"; break;
         case impl_types::any: out << "any"; break;
         default: out << "unknown"; break;
     }
 
     return out;
+}
+
+inline std::istream& operator>>(std::istream& is, impl_types& impl_type) {
+    std::string str;
+    is >> str;
+    if (str == "cpu") {
+        impl_type = impl_types::cpu;
+    } else if (str == "common") {
+        impl_type = impl_types::common;
+    } else if (str == "ocl") {
+        impl_type = impl_types::ocl;
+    } else if (str == "onednn") {
+        impl_type = impl_types::onednn;
+    } else if (str == "cm") {
+        impl_type = impl_types::cm;
+    } else if (str == "any") {
+        impl_type = impl_types::any;
+    } else {
+        OPENVINO_THROW("Unsupported impl type: ", str);
+    }
+    return is;
 }
 
 /// @brief Possible supported shape types.
@@ -82,25 +106,35 @@ inline std::ostream& operator<<(std::ostream& out, const shape_types& shape_type
     return out;
 }
 
-/// @brief Description of primitives implementation.
-struct implementation_desc {
-    format::type output_format;  ///< Output format.
-    std::string kernel_name;     ///< GPU kernel name.
-    impl_types impl_type;        ///< GPU implementation type.
+}  // namespace cldnn
 
-    implementation_desc() :
-        output_format(format::any),
+namespace ov {
+namespace intel_gpu {
+
+struct ImplementationDesc {
+    cldnn::format::type output_format;  ///< Output format.
+    std::string kernel_name;            ///< GPU kernel name.
+    cldnn::impl_types impl_type;        ///< GPU implementation type.
+
+    ImplementationDesc() :
+        output_format(cldnn::format::any),
         kernel_name(""),
-        impl_type(impl_types::any) {}
+        impl_type(cldnn::impl_types::any) {}
 
-    implementation_desc(format::type output_format,
+    ImplementationDesc(cldnn::format::type output_format,
                         std::string kernel_name,
-                        impl_types impl_type = impl_types::any) :
+                        cldnn::impl_types impl_type = cldnn::impl_types::any) :
         output_format(output_format),
         kernel_name(kernel_name),
         impl_type(impl_type) {}
 };
 
-using implementation_forcing_map = std::map<primitive_id, implementation_desc>;
+inline std::ostream& operator<<(std::ostream& out, const ImplementationDesc& desc) {
+    out << desc.impl_type << ":" << desc.kernel_name << ":" << desc.output_format;
+    return out;
+}
 
-}  // namespace cldnn
+using ImplForcingMap = std::map<cldnn::primitive_id, ImplementationDesc>;
+
+}  // namespace intel_gpu
+}  // namespace ov

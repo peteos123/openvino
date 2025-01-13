@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -14,6 +14,11 @@ namespace cldnn {
 struct work_group_sizes {
     std::vector<size_t> global;
     std::vector<size_t> local;
+};
+
+enum class kernel_language {
+    OCLC,
+    CM,
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -66,10 +71,7 @@ struct argument_desc {
         SLOPE,
         INTERNAL_BUFFER,
         SCALAR,
-        RECURRENT,  // RNN/LSTM/GRU recurrent weights
-        HIDDEN,     // RNN/LSTM/GRU hidden input
         CELL,       // LSTM cell input
-        LSTM_PACK,  // LSTM packed output
         WEIGHTS_ZERO_POINTS,
         ACTIVATIONS_ZERO_POINTS,
         COMPENSATION,
@@ -114,58 +116,6 @@ struct kernel_arguments_data {
     const scalars_desc* scalars = nullptr;
 };
 
-struct kernel_arguments_data_idx {
-    std::vector<int32_t> inputs;
-    int32_t weights;
-    int32_t recurrent;
-    int32_t hidden;
-    int32_t cell;
-    int32_t bias;
-    int32_t weights_zero_points;
-    int32_t activations_zero_points;
-    int32_t compensation;
-    int32_t lookup_table;
-    int32_t scale_table;
-    int32_t slope;
-
-    std::vector<int32_t> fused_op_inputs;
-    scalars_desc scalars;
-
-    template <typename BufferType>
-    void save(BufferType& ob) const {
-        ob << inputs;
-        ob << weights;
-        ob << recurrent;
-        ob << hidden;
-        ob << cell;
-        ob << bias;
-        ob << weights_zero_points;
-        ob << activations_zero_points;
-        ob << compensation;
-        ob << lookup_table;
-        ob << scale_table;
-        ob << slope;
-        ob << fused_op_inputs;
-    }
-
-    template <typename BufferType>
-    void load(BufferType& ib) {
-        ib >> inputs;
-        ib >> weights;
-        ib >> recurrent;
-        ib >> hidden;
-        ib >> cell;
-        ib >> bias;
-        ib >> weights_zero_points;
-        ib >> activations_zero_points;
-        ib >> compensation;
-        ib >> lookup_table;
-        ib >> scale_table;
-        ib >> slope;
-        ib >> fused_op_inputs;
-    }
-};
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // KernelString
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -176,8 +126,11 @@ struct kernel_string {
     std::string options;
     std::string entry_point;
     bool batch_compilation;
+    bool has_microkernels;
+    kernel_language language;
 
-    kernel_string() : str(""), jit(""), undefs(""), options(""), entry_point(""), batch_compilation(false) {}
+    kernel_string() : str(""), jit(""), undefs(""), options(""), entry_point(""),
+    batch_compilation(false), has_microkernels(false), language(kernel_language::OCLC) {}
 
     std::string get_str() const { return str + jit + undefs + options + entry_point; }
     size_t get_hash() const { return std::hash<std::string>()(get_str()); }

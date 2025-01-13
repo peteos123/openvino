@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 #pragma once
@@ -10,39 +10,68 @@
 #include <streambuf>
 #include <string>
 
+#include "openvino/c/ov_common.h"
+#include "openvino/core/except.hpp"
 #include "openvino/openvino.hpp"
-
-// TODO: we need to catch ov::Exception instead of ie::Exception
-#include "details/ie_exception.hpp"
+#include "openvino/runtime/exception.hpp"
 
 #define CATCH_OV_EXCEPTION(StatusCode, ExceptionType) \
-    catch (const InferenceEngine::ExceptionType&) {   \
+    catch (const ov::ExceptionType& ex) {             \
+        dup_last_err_msg(ex.what());                  \
         return ov_status_e::StatusCode;               \
     }
 
-#define CATCH_OV_EXCEPTIONS                                   \
-    CATCH_OV_EXCEPTION(GENERAL_ERROR, GeneralError)           \
-    CATCH_OV_EXCEPTION(NOT_IMPLEMENTED, NotImplemented)       \
-    CATCH_OV_EXCEPTION(NETWORK_NOT_LOADED, NetworkNotLoaded)  \
-    CATCH_OV_EXCEPTION(PARAMETER_MISMATCH, ParameterMismatch) \
-    CATCH_OV_EXCEPTION(NOT_FOUND, NotFound)                   \
-    CATCH_OV_EXCEPTION(OUT_OF_BOUNDS, OutOfBounds)            \
-    CATCH_OV_EXCEPTION(UNEXPECTED, Unexpected)                \
-    CATCH_OV_EXCEPTION(REQUEST_BUSY, RequestBusy)             \
-    CATCH_OV_EXCEPTION(RESULT_NOT_READY, ResultNotReady)      \
-    CATCH_OV_EXCEPTION(NOT_ALLOCATED, NotAllocated)           \
-    CATCH_OV_EXCEPTION(INFER_NOT_STARTED, InferNotStarted)    \
-    CATCH_OV_EXCEPTION(NETWORK_NOT_READ, NetworkNotRead)      \
-    CATCH_OV_EXCEPTION(INFER_CANCELLED, InferCancelled)       \
-    catch (...) {                                             \
-        return ov_status_e::UNKNOW_EXCEPTION;                 \
+#define CATCH_OV_EXCEPTIONS                                \
+    CATCH_OV_EXCEPTION(REQUEST_BUSY, Busy)                 \
+    CATCH_OV_EXCEPTION(INFER_CANCELLED, Cancelled)         \
+    CATCH_OV_EXCEPTION(NOT_IMPLEMENTED, NotImplemented)    \
+    CATCH_OV_EXCEPTION(GENERAL_ERROR, Exception)           \
+    catch (...) {                                          \
+        dup_last_err_msg("An unknown exception occurred"); \
+        return ov_status_e::UNKNOW_EXCEPTION;              \
     }
 
-#define GET_PROPERTY_FROM_ARGS_LIST                     \
-    std::string property_key = va_arg(args_ptr, char*); \
-    std::string _value = va_arg(args_ptr, char*);       \
-    ov::Any value = _value;                             \
-    property[property_key] = value;
+#define GET_PROPERTY_FROM_ARGS_LIST                                                                            \
+    std::string property_key = va_arg(args_ptr, char*);                                                        \
+    if (property_key == ov::cache_encryption_callbacks.name()) {                                               \
+        ov_encryption_callbacks* _value = va_arg(args_ptr, ov_encryption_callbacks*);                          \
+        auto encrypt_func = _value->encrypt_func;                                                              \
+        auto decrypt_func = _value->decrypt_func;                                                              \
+        std::function<std::string(const std::string&)> encrypt_value = [encrypt_func](const std::string& in) { \
+            size_t out_size = 0;                                                                               \
+            std::string out_str;                                                                               \
+            encrypt_func(in.c_str(), in.length(), nullptr, &out_size);                                         \
+            if (out_size > 0) {                                                                                \
+                std::unique_ptr<char[]> output_ptr(new char[out_size]);                                        \
+                if (output_ptr) {                                                                              \
+                    char* output = output_ptr.get();                                                           \
+                    encrypt_func(in.c_str(), in.length(), output, &out_size);                                  \
+                    out_str.assign(output, out_size);                                                          \
+                }                                                                                              \
+            }                                                                                                  \
+            return out_str;                                                                                    \
+        };                                                                                                     \
+        std::function<std::string(const std::string&)> decrypt_value = [decrypt_func](const std::string& in) { \
+            size_t out_size = 0;                                                                               \
+            std::string out_str;                                                                               \
+            decrypt_func(in.c_str(), in.length(), nullptr, &out_size);                                         \
+            if (out_size > 0) {                                                                                \
+                std::unique_ptr<char[]> output_ptr(new char[out_size]);                                        \
+                if (output_ptr) {                                                                              \
+                    char* output = output_ptr.get();                                                           \
+                    decrypt_func(in.c_str(), in.length(), output, &out_size);                                  \
+                    out_str.assign(output, out_size);                                                          \
+                }                                                                                              \
+            }                                                                                                  \
+            return out_str;                                                                                    \
+        };                                                                                                     \
+        ov::EncryptionCallbacks encryption_callbacks{std::move(encrypt_value), std::move(decrypt_value)};      \
+        property[property_key] = encryption_callbacks;                                                         \
+    } else {                                                                                                   \
+        std::string _value = va_arg(args_ptr, char*);                                                          \
+        ov::Any value = _value;                                                                                \
+        property[property_key] = value;                                                                        \
+    }
 
 /**
  * @struct ov_core
@@ -165,6 +194,14 @@ struct ov_preprocess_preprocess_steps {
 };
 
 /**
+ * @struct ov_remote_context
+ * @brief This is an interface of ov::RemoteContext
+ */
+struct ov_remote_context {
+    std::shared_ptr<ov::RemoteContext> object;
+};
+
+/**
  * @struct mem_stringbuf
  * @brief This struct puts memory buffer to stringbuf.
  */
@@ -173,7 +210,7 @@ struct mem_stringbuf : std::streambuf {
         char* bptr(const_cast<char*>(buffer));
         setg(bptr, bptr, bptr + sz);
     }
-    
+
     pos_type seekoff(off_type off,
                      std::ios_base::seekdir dir,
                      std::ios_base::openmode which = std::ios_base::in) override {
@@ -209,4 +246,6 @@ struct mem_istream : virtual mem_stringbuf, std::istream {
 };
 
 char* str_to_char_array(const std::string& str);
+ov_element_type_e find_ov_element_type_e(ov::element::Type type);
 ov::element::Type get_element_type(ov_element_type_e type);
+void dup_last_err_msg(const char* msg);

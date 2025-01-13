@@ -4,8 +4,8 @@
 
 #pragma once
 
-#include <openvino/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
+#include "openvino/pass/matcher_pass.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 namespace pass {
@@ -17,12 +17,6 @@ class TRANSFORMATIONS_API ConvertConvertLike;
 
 class ov::pass::ConvertConvertLike : public ov::pass::MatcherPass {
 public:
-    OPENVINO_RTTI("ConvertConvertLike", "0");
+    OPENVINO_MATCHER_PASS_RTTI("ConvertConvertLike");
     ConvertConvertLike();
 };
-
-namespace ngraph {
-namespace pass {
-using ov::pass::ConvertConvertLike;
-}  // namespace pass
-}  // namespace ngraph

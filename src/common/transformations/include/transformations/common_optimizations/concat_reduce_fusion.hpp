@@ -1,11 +1,11 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <openvino/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
+#include "openvino/pass/graph_rewrite.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 namespace pass {
@@ -18,28 +18,28 @@ class TRANSFORMATIONS_API ConcatReduceFusion;
 }  // namespace ov
 
 /**
- * @ingroup ie_transformation_common_api
+ * @ingroup ov_transformation_common_api
  * @brief ReplaceConcatReduceByMinOrMax transformation replaces Concat with 2 inputs and ReduceMin/Max
  * by a single Minimum/Maximum with 2 inputs and inserts squeeze in case when Reduce has keep_dims = false.
  */
 class ov::pass::ReplaceConcatReduceByMinOrMax : public ov::pass::MatcherPass {
 public:
-    OPENVINO_RTTI("ReplaceConcatReduceByMinOrMax", "0");
+    OPENVINO_MATCHER_PASS_RTTI("ReplaceConcatReduceByMinOrMax");
     ReplaceConcatReduceByMinOrMax();
 };
 
 /**
- * @ingroup ie_transformation_common_api
+ * @ingroup ov_transformation_common_api
  * @brief PullSqueezeThroughEltwise transformation propagates Squeeze up through binary elementwise operations:
  */
 class ov::pass::PullSqueezeThroughEltwise : public ov::pass::MatcherPass {
 public:
-    OPENVINO_RTTI("PullSqueezeThroughEltwise", "0");
+    OPENVINO_MATCHER_PASS_RTTI("PullSqueezeThroughEltwise");
     PullSqueezeThroughEltwise();
 };
 
 /**
- * @ingroup ie_transformation_common_api
+ * @ingroup ov_transformation_common_api
  * @brief ConcatReduceFusion pass replaces the following graph:
  *
  *               +---------------+            +---------------+
@@ -76,14 +76,6 @@ public:
 
 class ov::pass::ConcatReduceFusion : public ov::pass::GraphRewrite {
 public:
-    OPENVINO_RTTI("ConcatReduceFusion", "0");
+    OPENVINO_GRAPH_REWRITE_RTTI("ConcatReduceFusion");
     ConcatReduceFusion();
 };
-
-namespace ngraph {
-namespace pass {
-using ov::pass::ConcatReduceFusion;
-using ov::pass::PullSqueezeThroughEltwise;
-using ov::pass::ReplaceConcatReduceByMinOrMax;
-}  // namespace pass
-}  // namespace ngraph

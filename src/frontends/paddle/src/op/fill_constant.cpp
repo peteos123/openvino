@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -29,6 +29,10 @@ NamedOutputs fill_constant(const NodeContext& node) {
         PADDLE_OP_CHECK(node, false, "fill_constant only supports i32, f32, i64");
     }
 
+    if (shape.empty()) {
+        shape.emplace_back(1);
+    }
+
     PADDLE_OP_CHECK(node,
                     shape.size() > 0 || node.has_input("ShapeTensor") || node.has_input("ShapeTensorList"),
                     "fill_constant shape not set");
@@ -37,6 +41,13 @@ NamedOutputs fill_constant(const NodeContext& node) {
         shape_node = node.get_input("ShapeTensor");
     } else if (node.has_input("ShapeTensorList")) {
         auto shape_tensor_list = node.get_ng_inputs("ShapeTensorList");
+        for (size_t i = 0; i < shape_tensor_list.size(); i++) {
+            auto node = shape_tensor_list[i];
+            if (node.get_shape().size() == 0) {
+                shape_tensor_list[i] =
+                    std::make_shared<opset6::Unsqueeze>(node, opset6::Constant::create(element::i64, {1}, {0}));
+            }
+        }
         shape_node = Output<Node>{std::make_shared<opset6::Concat>(shape_tensor_list, 0)};
     } else {
         shape_node = opset6::Constant::create(element::i64, {shape.size()}, shape);

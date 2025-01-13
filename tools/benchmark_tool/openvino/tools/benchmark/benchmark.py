@@ -1,7 +1,8 @@
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+import time
 from datetime import datetime
 from math import ceil
 from openvino.runtime import Core, get_version, AsyncInferQueue
@@ -15,7 +16,8 @@ def percentile(values, percent):
 
 class Benchmark:
     def __init__(self, device: str, number_infer_requests: int = 0, number_iterations: int = None,
-                 duration_seconds: int = None, api_type: str = 'async', inference_only = None):
+                 duration_seconds: int = None, api_type: str = 'async', inference_only = None,
+                 maximum_inference_rate: float = 0):
         self.device = device
         self.core = Core()
         self.nireq = number_infer_requests if api_type == 'async' else 1
@@ -24,6 +26,7 @@ class Benchmark:
         self.api_type = api_type
         self.inference_only = inference_only
         self.latency_groups = []
+        self.max_irate = maximum_inference_rate
 
     def __del__(self):
         del self.core
@@ -59,9 +62,6 @@ class Benchmark:
     def set_cache_dir(self, cache_dir: str):
         self.core.set_property({'CACHE_DIR': cache_dir})
 
-    def set_allow_auto_batching(self, flag: bool):
-        self.core.set_property({'ALLOW_AUTO_BATCHING': flag})
-
     def read_model(self, path_to_model: str):
         model_filename = os.path.abspath(path_to_model)
         head, ext = os.path.splitext(model_filename)
@@ -86,13 +86,21 @@ class Benchmark:
             requests.wait_all()
             return requests[id].latency
 
+    def inference_rate_delay(self, processed_frames, exec_time):
+        if self.max_irate > 0:
+            nextRunFinishTime = 1 / self.max_irate * processed_frames
+            delay = nextRunFinishTime - exec_time
+            time.sleep(delay if delay > 0 else 0)
+
     def sync_inference(self, request, data_queue):
+        processed_frames = 0
         exec_time = 0
         iteration = 0
         times = []
         start_time = datetime.utcnow()
         while (self.niter and iteration < self.niter) or \
               (self.duration_seconds and exec_time < self.duration_seconds):
+            processed_frames += data_queue.get_next_batch_size()
             if self.inference_only == False:
                 request.set_input_tensors(data_queue.get_next_input())
             request.infer()
@@ -100,10 +108,12 @@ class Benchmark:
             iteration += 1
 
             exec_time = (datetime.utcnow() - start_time).total_seconds()
+            self.inference_rate_delay(processed_frames, exec_time)
         total_duration_sec = (datetime.utcnow() - start_time).total_seconds()
         return sorted(times), total_duration_sec, iteration
 
-    def async_inference_only(self, infer_queue):
+    def async_inference_only(self, infer_queue, data_queue):
+        processed_frames = 0
         exec_time = 0
         iteration = 0
         times = []
@@ -112,8 +122,9 @@ class Benchmark:
         while (self.niter and iteration < self.niter) or \
               (self.duration_seconds and exec_time < self.duration_seconds) or \
               (iteration % self.nireq):
+            processed_frames += data_queue.get_next_batch_size()
             idle_id = infer_queue.get_idle_request_id()
-            if idle_id in in_fly:       # Is this check neccessary?
+            if idle_id in in_fly:
                 times.append(infer_queue[idle_id].latency)
             else:
                 in_fly.add(idle_id)
@@ -121,6 +132,8 @@ class Benchmark:
             iteration += 1
 
             exec_time = (datetime.utcnow() - start_time).total_seconds()
+            self.inference_rate_delay(processed_frames, exec_time)
+
         infer_queue.wait_all()
         total_duration_sec = (datetime.utcnow() - start_time).total_seconds()
         for infer_request_id in in_fly:
@@ -152,6 +165,7 @@ class Benchmark:
             iteration += 1
 
             exec_time = (datetime.utcnow() - start_time).total_seconds()
+            self.inference_rate_delay(processed_frames, exec_time)
         infer_queue.wait_all()
         total_duration_sec = (datetime.utcnow() - start_time).total_seconds()
         
@@ -165,8 +179,9 @@ class Benchmark:
     def main_loop(self, requests, data_queue, batch_size, latency_percentile, pcseq):
         if self.api_type == 'sync':
             times, total_duration_sec, iteration = self.sync_inference(requests[0], data_queue)
+            fps = len(batch_size) * iteration / total_duration_sec
         elif self.inference_only:
-            times, total_duration_sec, iteration = self.async_inference_only(requests)
+            times, total_duration_sec, iteration = self.async_inference_only(requests, data_queue)
             fps = len(batch_size) * iteration / total_duration_sec
         else:
             times, total_duration_sec, processed_frames, iteration = self.async_inference_full_mode(requests, data_queue, pcseq)
@@ -176,9 +191,6 @@ class Benchmark:
         avg_latency_ms = sum(times) / len(times)
         min_latency_ms = times[0]
         max_latency_ms = times[-1]
-
-        if self.api_type == 'sync':
-            fps = len(batch_size) * 1000 / median_latency_ms
 
         if pcseq:
             for group in self.latency_groups:

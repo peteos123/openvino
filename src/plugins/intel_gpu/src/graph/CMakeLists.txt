@@ -1,9 +1,10 @@
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 #
 
 set(TARGET_NAME "openvino_intel_gpu_graph")
 
+file(GLOB_RECURSE SYCL_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/impls/sycl/*")
 file(GLOB_RECURSE LIBRARY_SRC
     "${INCLUDE_DIR}/*.h"
     "${INCLUDE_DIR}/*.hpp"
@@ -22,6 +23,10 @@ if (NOT ENABLE_ONEDNN_FOR_GPU)
     endforeach(SOURCE_FILE)
 endif()
 
+if(NOT OV_COMPILER_IS_INTEL_LLVM)
+    list(REMOVE_ITEM LIBRARY_SRC ${SYCL_SOURCES})
+endif()
+
 add_library(${TARGET_NAME} STATIC ${LIBRARY_SRC})
 
 target_include_directories(${TARGET_NAME} PUBLIC
@@ -33,11 +38,16 @@ target_include_directories(${TARGET_NAME} PUBLIC
 target_compile_options(${TARGET_NAME} PRIVATE
   $<$<CONFIG:Release>:$<IF:$<CXX_COMPILER_ID:MSVC>,/Os,-Os>>)
 
-target_link_libraries(${TARGET_NAME} PUBLIC OpenCL)
+if(OV_COMPILER_IS_INTEL_LLVM)
+    add_sycl_to_target(TARGET ${TARGET_NAME} SOURCES ${SYCL_SOURCES})
+    target_compile_definitions(${TARGET_NAME} PUBLIC OV_GPU_WITH_SYCL)
+endif()
+
+target_link_libraries(${TARGET_NAME} PUBLIC OpenCL::OpenCL openvino::shape_inference)
 target_link_libraries(${TARGET_NAME} PRIVATE openvino_intel_gpu_kernels
                                              openvino_intel_gpu_runtime
-                                             ov_shape_inference
                                              openvino::itt
+                                             openvino::reference
                                              openvino::runtime::dev
                                              openvino::runtime)
 
@@ -49,7 +59,7 @@ if(COMMAND add_cpplint_target)
   add_cpplint_target(${TARGET_NAME}_cpplint FOR_TARGETS ${TARGET_NAME})
 endif()
 
-set_ie_threading_interface_for(${TARGET_NAME})
+ov_set_threading_interface_for(${TARGET_NAME})
 
 set_target_properties(${TARGET_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE ${ENABLE_LTO})
 
@@ -59,7 +69,11 @@ elseif((NOT ANDROID) AND (UNIX))
   target_link_libraries(${TARGET_NAME} PRIVATE pthread)
 endif()
 
-ov_install_static_lib(${TARGET_NAME} gpu)
+ov_install_static_lib(${TARGET_NAME} ${OV_CPACK_COMP_CORE})
 
-ie_sse42_optimization_flags(sse4_2_flags)
-set_source_files_properties(impls/cpu/detection_output.cpp half.cpp PROPERTIES COMPILE_FLAGS "${sse4_2_flags}")
+if(ENABLE_SSE42)
+  ov_sse42_optimization_flags(sse4_2_flags)
+  set_source_files_properties(impls/cpu/detection_output.cpp PROPERTIES
+    COMPILE_FLAGS "${sse4_2_flags}"
+    COMPILE_DEFINITIONS "HAVE_SSE")
+endif()

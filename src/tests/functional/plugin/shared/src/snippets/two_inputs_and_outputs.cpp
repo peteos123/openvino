@@ -11,14 +11,19 @@ namespace test {
 namespace snippets {
 
 std::string TwoInputsAndOutputs::getTestCaseName(testing::TestParamInfo<ov::test::snippets::TwoInputsAndOutputsParams> obj) {
-    std::vector<ov::Shape> inputShapes;
+    std::vector<InputShape> inputShapes;
     std::string targetDevice;
     size_t num_nodes, num_subgraphs;
     std::tie(inputShapes, num_nodes, num_subgraphs, targetDevice) = obj.param;
 
     std::ostringstream result;
-    for (auto i = 0; i < inputShapes.size(); i++)
-        result << "IS[" << i << "]=" << CommonTestUtils::vec2str(inputShapes[i]) << "_";
+    for (size_t i = 0; i < inputShapes.size(); ++i) {
+        result << "IS[" << i << "]=" << ov::test::utils::partialShape2str({inputShapes[i].first}) << "_";
+        result << "TS[" << i << "]=";
+        for (const auto& shape : inputShapes[i].second) {
+            result << "(" << ov::test::utils::vec2str(shape) << ")_";
+        }
+    }
     result << "#N=" << num_nodes << "_";
     result << "#S=" << num_subgraphs << "_";
     result << "targetDevice=" << targetDevice;
@@ -26,14 +31,35 @@ std::string TwoInputsAndOutputs::getTestCaseName(testing::TestParamInfo<ov::test
 }
 
 void TwoInputsAndOutputs::SetUp() {
-    std::vector<ov::Shape> inputShape;
+    std::vector<InputShape> inputShape;
     std::tie(inputShape, ref_num_nodes, ref_num_subgraphs, targetDevice) = this->GetParam();
-    init_input_shapes(static_shapes_to_test_representation(inputShape));
-    auto f = ov::test::snippets::TwoInputsAndOutputsFunction(inputShape);
+    init_input_shapes(inputShape);
+    auto f = ov::test::snippets::TwoInputsAndOutputsFunction(inputDynamicShapes);
     function = f.getOriginal();
+    if (!configuration.count("SNIPPETS_MODE")) {
+        configuration.insert({"SNIPPETS_MODE", "IGNORE_CALLBACK"});
+    }
+    abs_threshold = 5e-7;
+}
+
+void TwoInputsAndOutputsWithReversedOutputs::SetUp() {
+    std::vector<InputShape> inputShape;
+    std::tie(inputShape, ref_num_nodes, ref_num_subgraphs, targetDevice) = this->GetParam();
+    init_input_shapes(inputShape);
+    auto f = ov::test::snippets::TwoInputsAndOutputsWithReversedOutputsFunction(inputDynamicShapes);
+    function = f.getOriginal();
+    if (!configuration.count("SNIPPETS_MODE")) {
+        configuration.insert({"SNIPPETS_MODE", "IGNORE_CALLBACK"});
+    }
+    abs_threshold = 5e-7;
 }
 
 TEST_P(TwoInputsAndOutputs, CompareWithRefImpl) {
+    run();
+    validateNumSubgraphs();
+}
+
+TEST_P(TwoInputsAndOutputsWithReversedOutputs, CompareWithRefImpl) {
     run();
     validateNumSubgraphs();
 }

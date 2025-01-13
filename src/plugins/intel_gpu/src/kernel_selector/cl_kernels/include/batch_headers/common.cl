@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -52,6 +52,8 @@
 #define TYPE_SIZE_int    4
 #define TYPE_SIZE_uint   4
 #define TYPE_SIZE_float  4
+#define TYPE_SIZE_ulong  8
+#define TYPE_SIZE_long   8
 #define TYPE_SIZE(type) CAT(TYPE_SIZE_, type)
 
 #ifdef cl_intel_required_subgroup_size

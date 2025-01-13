@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -12,6 +12,7 @@
 #include "openvino/frontend/exception.hpp"
 #include "openvino/frontend/extension/telemetry.hpp"
 #include "openvino/frontend/manager.hpp"
+#include "openvino/util/file_util.hpp"
 #include "pyopenvino/graph/model.hpp"
 #include "pyopenvino/utils/utils.hpp"
 
@@ -23,20 +24,81 @@ void regclass_frontend_FrontEnd(py::module m) {
     py::class_<FrontEnd, std::shared_ptr<FrontEnd>> fem(m, "FrontEnd", py::dynamic_attr(), py::module_local());
     fem.doc() = "openvino.frontend.FrontEnd wraps ov::frontend::FrontEnd";
 
+    fem.def(py::init([](const std::shared_ptr<FrontEnd>& other) {
+                return other;
+            }),
+            py::arg("other"));
+
     fem.def(
         "load",
-        [](FrontEnd& self, const py::object& path) {
-            std::string model_path = Common::utils::convert_path_to_string(path);
-            return self.load(model_path);
+        [](FrontEnd& self, const py::object& py_obj, const bool enable_mmap = true) {
+            if (py::isinstance(py_obj, py::module_::import("pathlib").attr("Path")) ||
+                py::isinstance<py::str>(py_obj) || py::isinstance<py::bytes>(py_obj)) {
+                // check if model path is either a string/pathlib.Path/bytes
+                std::string model_path = Common::utils::convert_path_to_string(py_obj);
+                if (py::isinstance(py_obj, py::module_::import("pathlib").attr("Path")) ||
+                    py::isinstance<py::str>(py_obj)) {
+
+                // Fix unicode path
+#if defined(OPENVINO_ENABLE_UNICODE_PATH_SUPPORT) && defined(_WIN32)
+                    return self.load(ov::util::string_to_wstring(model_path.c_str()));
+#else
+                    return self.load(model_path.c_str());
+#endif
+                }
+                return self.load(model_path, enable_mmap);
+            } else if (py::isinstance(py_obj, pybind11::module::import("io").attr("BytesIO"))) {
+                // support of BytesIO
+                py::buffer_info info = py::buffer(py_obj.attr("getbuffer")()).request();
+                Common::utils::MemoryBuffer mb(reinterpret_cast<char*>(info.ptr), info.size);
+                std::istream _istream(&mb);
+                return self.load(&_istream, enable_mmap);
+            } else {
+                // Extended for one argument only for this time
+                return self.load({Common::utils::py_object_to_any(py_obj), enable_mmap});
+            }
         },
         py::arg("path"),
+        py::arg("enable_mmap") = true,
         R"(
-                Loads an input model by specified model file path.
+                Loads an input model.
 
-                :param path: Main model file path.
-                :type path: Union[str, pathlib.Path]
+                :param path: Object describing the model. It can be path to model file.
+                :type path: Any
+                :param enable_mmap: Use mmap feature to map memory of a model's weights instead of reading directly. Optional. The default value is true.
+                :type enable_mmap: boolean
                 :return: Loaded input model.
                 :rtype: openvino.frontend.InputModel
+             )");
+
+    fem.def(
+        "supported",
+        [](FrontEnd& self, const py::object& model) {
+            if (py::isinstance(model, py::module_::import("pathlib").attr("Path")) || py::isinstance<py::str>(model) ||
+                py::isinstance<py::bytes>(model)) {
+                // check if model path is either a string/pathlib.Path/bytes
+                std::string model_path = Common::utils::convert_path_to_string(model);
+                if (py::isinstance(model, py::module_::import("pathlib").attr("Path")) ||
+                    py::isinstance<py::str>(model)) {
+
+                // Fix unicode path
+#if defined(OPENVINO_ENABLE_UNICODE_PATH_SUPPORT) && defined(_WIN32)
+                    return self.supported(ov::util::string_to_wstring(model_path.c_str()));
+#else
+                    return self.supported(model_path.c_str());
+#endif
+                }
+            }
+            return self.supported({Common::utils::py_object_to_any(model)});
+        },
+        py::arg("model"),
+        R"(
+                Checks if model type is supported.
+
+                :param model: Object describing the model. It can be path to model file.
+                :type model: Any
+                :return: True if model type is supported, otherwise False.
+                :rtype: bool
              )");
 
     fem.def("convert",
@@ -51,10 +113,13 @@ void regclass_frontend_FrontEnd(py::module m) {
                 :rtype: openvino.runtime.Model
              )");
 
-    fem.def("convert",
-            static_cast<void (FrontEnd::*)(const std::shared_ptr<ov::Model>&) const>(&FrontEnd::convert),
-            py::arg("model"),
-            R"(
+    fem.def(
+        "convert",
+        [](FrontEnd& self, const py::object& ie_api_model) {
+            return self.convert(Common::utils::convert_to_model(ie_api_model));
+        },
+        py::arg("model"),
+        R"(
                 Completely convert the remaining, not converted part of a function.
 
                 :param model: Partially converted OpenVINO model.
@@ -91,10 +156,13 @@ void regclass_frontend_FrontEnd(py::module m) {
                 :rtype: openvino.runtime.Model
              )");
 
-    fem.def("normalize",
-            &FrontEnd::normalize,
-            py::arg("model"),
-            R"(
+    fem.def(
+        "normalize",
+        [](FrontEnd& self, const py::object& ie_api_model) {
+            self.normalize(Common::utils::convert_to_model(ie_api_model));
+        },
+        py::arg("model"),
+        R"(
                 Runs normalization passes on function that was loaded with partial conversion.
 
                 :param model : Partially converted OpenVINO model.
@@ -114,7 +182,7 @@ void regclass_frontend_FrontEnd(py::module m) {
     fem.def("add_extension",
             static_cast<void (FrontEnd::*)(const std::shared_ptr<ov::Extension>& extension)>(&FrontEnd::add_extension),
             R"(
-                Add extension defined by an object inheriting from Extension 
+                Add extension defined by an object inheriting from Extension
                 used in order to extend capabilities of Frontend.
 
                 :param extension: Provided extension object.
@@ -122,13 +190,27 @@ void regclass_frontend_FrontEnd(py::module m) {
             )");
 
     fem.def("add_extension",
-            static_cast<void (FrontEnd::*)(const std::string& extension_path)>(&FrontEnd::add_extension),
+            static_cast<void (FrontEnd::*)(const std::vector<std::shared_ptr<ov::Extension>>& extension)>(
+                &FrontEnd::add_extension),
             R"(
-                Add extension defined in external library indicated by a extension_path 
+                Add extensions defined by objects inheriting from Extension
+                used in order to extend capabilities of Frontend.
+
+                :param extension: Provided extension objects.
+                :type extension: List[Extension]
+            )");
+
+    fem.def(
+        "add_extension",
+        [](FrontEnd& self, const py::object& extension_path) {
+            return self.add_extension(Common::utils::convert_path_to_string(extension_path));
+        },
+        R"(
+                Add extension defined in external library indicated by a extension_path
                 used in order to extend capabilities of Frontend.
 
                 :param extension_path: A path to extension.
-                :type extension_path: str
+                :type extension_path: str, Path
             )");
 
     fem.def("__repr__", [](const FrontEnd& self) -> std::string {

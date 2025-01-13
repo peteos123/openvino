@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -21,8 +21,8 @@ ParamsKey FullyConnected_bs_f_bsv16_b1::GetSupportedKey() const {
     return k;
 }
 
-DeviceFeaturesKey FullyConnected_bs_f_bsv16_b1::get_required_device_features_key(const Params& params, const optional_params& options) const {
-    auto k = get_common_subgroups_device_features_key(params, options);
+DeviceFeaturesKey FullyConnected_bs_f_bsv16_b1::get_required_device_features_key(const Params& params) const {
+    auto k = get_common_subgroups_device_features_key(params);
     k.requires_subgroup_shuffle();
     k.requires_subgroup_shuffle_relative();
 
@@ -52,7 +52,7 @@ JitConstants FullyConnected_bs_f_bsv16_b1::GetJitConstants(
 }
 
 FullyConnected_bs_f_bsv16_b1::DispatchData FullyConnected_bs_f_bsv16_b1::SetDefault(const fully_connected_params& arg,
-                                                                                    int) const {
+                                                                                    int, int /*kernel_number*/) const {
     DispatchData dispatchData = FullyConnectedKernelBase::SetDefault(arg);
 
     // Properties of chunk and unit.
@@ -64,7 +64,7 @@ FullyConnected_bs_f_bsv16_b1::DispatchData FullyConnected_bs_f_bsv16_b1::SetDefa
     const uint32_t units_per_sg_read = sub_group_size * units_per_chunk;
     // Properties of primitive responses.
     constexpr uint32_t responses_per_sg_exec =
-        16;  // Must match batch slice size of weights format (bs_x_bsv16).
+        16;  // Must match batch slice size of weights format (bs_f_bsv16).
              // Number of response groups. Each group (except last) writes responses_per_sg_exec responses
              // for at least one input data set from batch.
     const auto response_size = arg.outputs[0].Feature().v;
@@ -89,11 +89,26 @@ FullyConnected_bs_f_bsv16_b1::DispatchData FullyConnected_bs_f_bsv16_b1::SetDefa
     return dispatchData;
 }
 
-KernelsData FullyConnected_bs_f_bsv16_b1::GetKernelsData(const Params& params, const optional_params& optParams) const {
+bool FullyConnected_bs_f_bsv16_b1::Validate(const Params& p) const {
+    if (!FullyConnectedKernelBase::Validate(p)) {
+        return false;
+    }
+
+    const auto& params = static_cast<const fully_connected_params&>(p);
+
+    if (!params.bias.empty()) {
+        if (params.inputs[0].GetDType() != params.bias[0].GetDType()) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+KernelsData FullyConnected_bs_f_bsv16_b1::GetKernelsData(const Params& params) const {
     KernelsData res = {};
     for (size_t i = 0; i < autoTuneOptions.size(); i++) {
         KernelsData kd = GetTunedKernelsDataByIndex(params,
-                                                    optParams,
                                                     DataLayout::bf,
                                                     WeightsLayout::os_i_osv16,
                                                     static_cast<int>(i));
@@ -105,7 +120,7 @@ KernelsData FullyConnected_bs_f_bsv16_b1::GetKernelsData(const Params& params, c
     return res;
 }
 
-KernelsPriority FullyConnected_bs_f_bsv16_b1::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority FullyConnected_bs_f_bsv16_b1::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_5;
 }
 }  // namespace kernel_selector

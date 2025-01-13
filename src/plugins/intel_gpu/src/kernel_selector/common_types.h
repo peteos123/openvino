@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -14,6 +14,9 @@ namespace kernel_selector {
 enum class KernelType {
     UNKNOWN,
     ARG_MAX_MIN,
+    BEAM_TABLE_UPDATE,
+    PA_KV_CACHE_UPDATE,
+    PA_SDPA,
     CONVOLUTION,
     DECONVOLUTION,
     DFT,
@@ -32,14 +35,14 @@ enum class KernelType {
     RESHAPE,
     COUNT_NONZERO,
     GATHER_NONZERO,
+    GROUP_NORMALIZATION,
     PERMUTE,
     CONCATENATION,
     RESAMPLE,
     REGION_YOLO,
     REORG_YOLO,
     MVN,
-    LSTM_GEMM,
-    LSTM_ELT,
+    LSTM_SEQ_CELL,
     BORDER,
     TILE,
     SELECT,
@@ -47,7 +50,6 @@ enum class KernelType {
     BUCKETIZE,
     GEMM,
     GRID_SAMPLE,
-    PYRAMID_ROI_ALIGN,
     CONTRACT,
     ONE_HOT,
     GATHER,
@@ -59,14 +61,12 @@ enum class KernelType {
     DEPTH_TO_SPACE,
     BATCH_TO_SPACE,
     SHAPE_OF,
+    SDPA,
     SHUFFLE_CHANNELS,
     SLICE,
     STRIDED_SLICE,
     REVERSE_SEQUENCE,
-    BINARY_CONVOLUTION,
     QUANTIZE,
-    LSTM_DYNAMIC_INPUT,
-    LSTM_DYNAMIC_TIMELOOP,
     REDUCE,
     GATHER_TREE,
     SPACE_TO_DEPTH,
@@ -79,6 +79,7 @@ enum class KernelType {
     EXTRACT_IMAGE_PATCHES,
     LOOP,
     NON_MAX_SUPPRESSION,
+    NON_MAX_SUPPRESSION_GATHER,
     DETECTION_OUTPUT,
     EXPERIMENTAL_DETECTRON_DETECTION_OUTPUT,
     EXPERIMENTAL_DETECTRON_GENERATE_PROPOSALS_SINGLE_IMAGE,
@@ -93,7 +94,16 @@ enum class KernelType {
     PRIOR_BOX,
     EYE,
     GENERATE_PROPOSALS,
-    MULTICLASS_NMS
+    MULTICLASS_NMS,
+    MULTINOMIAL,
+    UNIQUE_COUNT,
+    UNIQUE_GATHER,
+    RMS,
+    SWIGLU,
+    ROPE,
+    DYNAMIC_QUANTIZE,
+    SEARCH_SORTED,
+    STFT
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -101,7 +111,8 @@ enum class KernelType {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 enum class Datatype {
     UNSUPPORTED,
-    BINARY,
+    UINT4,
+    INT4,
     INT8,
     UINT8,
     INT16,
@@ -111,6 +122,7 @@ enum class Datatype {
     INT64,
     F16,
     F32,
+    BF16,
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -118,11 +130,14 @@ enum class Datatype {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 enum class WeightsType {
     UNSUPPORTED,
-    BINARY,
     F16,
     F32,
     INT8,
     UINT8,
+    UINT4,
+    INT4,
+    INT32,
+    BF16
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -289,7 +304,15 @@ enum class EltwiseMode {
     LOGIC_OR,
     LOGIC_XOR,
     SQUARED_DIFF,
-    FLOOR_MOD
+    FLOOR_MOD,
+    IS_FINITE,
+    IS_INF,
+    IS_NAN,
+    RIGHT_SHIFT,
+    LEFT_SHIFT,
+    BITWISE_AND,
+    BITWISE_OR,
+    BITWISE_XOR
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -362,6 +385,8 @@ enum class ResampleType {
     CAFFE_BILINEAR_INTERP,
     CUBIC,
     LINEAR_ONNX,
+    BILINEAR_PILLOW,
+    BICUBIC_PILLOW,
 };
 
 enum class CoordinateTransformationMode {
@@ -444,36 +469,6 @@ struct DimTensor {
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// AutoTunerMode
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-enum class TuningMode {
-    TUNING_DISABLED,         // Tuning is disabled.
-    TUNING_USE_CACHE,        // Tuning using the cached data (no on-line tuning for non-existing data).
-    TUNING_TUNE_AND_CACHE,   // Tuning using the cached data if exist, tune and update cache otherwise.attention_params
-    TUNING_USE_AND_UPDATE,   // Tuning using the cached data and other updating tasks.
-                             // Performs updating tasks like removal of invalid caches, promoting to new formats, etc.
-                             // No tuning for non-existing data.
-    TUNING_RETUNE_AND_CACHE  // Perform tuning even if the cached data exists.
-};
-
-inline bool UseCached(const TuningMode& mode) {
-    return mode == TuningMode::TUNING_USE_CACHE
-        || mode == TuningMode::TUNING_TUNE_AND_CACHE
-        || mode == TuningMode::TUNING_USE_AND_UPDATE;
-}
-
-inline bool PerformTuning(const TuningMode& mode) {
-    return mode == TuningMode::TUNING_TUNE_AND_CACHE
-        || mode == TuningMode::TUNING_RETUNE_AND_CACHE;
-}
-
-inline bool PerformUpdates(const TuningMode& mode) {
-    return mode == TuningMode::TUNING_TUNE_AND_CACHE
-        || mode == TuningMode::TUNING_USE_AND_UPDATE
-        || mode == TuningMode::TUNING_RETUNE_AND_CACHE;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Aliases:
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 using uSize = Size<std::uint32_t>;
@@ -510,8 +505,21 @@ enum class ScatterUpdateAxis {
     Y,
     Z,
     W,
+    U,
+    V,
     FEATURE,
     BATCH,
+};
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ScatterUpdateReduction
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+enum class ScatterUpdateReduction {
+    NONE = 0,
+    SUM,
+    PROD,
+    MIN,
+    MAX,
+    MEAN
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -577,6 +585,15 @@ enum class EmbeddingBagType {
 enum class BoxEncodingType {
     BOX_ENCODING_CORNER,
     BOX_ENCODING_CENTER,
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// NMSRotationType
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+enum class NMSRotationType {
+    NONE,
+    CLOCKWISE,
+    COUNTERCLOCKWISE
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

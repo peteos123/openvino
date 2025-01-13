@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -8,8 +8,9 @@
 #include <cctype>
 
 #include "layout_utils.hpp"
-#include "ngraph/except.hpp"
-#include "ngraph/util.hpp"
+#include "openvino/op/parameter.hpp"
+#include "openvino/op/result.hpp"
+#include "openvino/util/common_util.hpp"
 
 namespace ov {
 
@@ -37,7 +38,7 @@ static const std::map<std::string, std::string>& dim_aliases() {
 }
 
 static std::string to_internal_name(const std::string& dim_name) {
-    auto name = ngraph::to_upper(dim_name);
+    auto name = ov::util::to_upper(dim_name);
     auto it = dim_aliases().find(name);
     if (it != dim_aliases().end()) {
         name = it->second;
@@ -73,7 +74,7 @@ Layout::Layout(const std::string& layout_str) {
         m_left_size = m_right_size = 0;
         return;
     }
-    auto layout = ngraph::trim(layout_str);
+    auto layout = ov::util::trim(layout_str);
     OPENVINO_ASSERT(layout.length() > 0, "Cannot parse ov::Layout from an empty string");
     if (layout == SCALAR) {
         m_scalar = true;
@@ -90,7 +91,7 @@ Layout::Layout(const std::string& layout_str) {
         OPENVINO_ASSERT(m_names.count(dim_name) == 0,
                         "Dimension (" + dim_name + ") is defined multiple times in layout");
         m_names[dim_name] = index;
-        m_index_map[index] = dim_name;
+        m_index_map[index] = std::move(dim_name);
     };
 
     if (is_advanced_syntax(layout)) {
@@ -100,7 +101,7 @@ Layout::Layout(const std::string& layout_str) {
             std::istringstream ss(sub_name);
             std::string name;
             while (std::getline(ss, name, ',')) {
-                name = ngraph::trim(name);
+                name = ov::util::trim(name);
                 if (name != "?") {
                     assign_name(name, index);
                 }
@@ -117,14 +118,14 @@ Layout::Layout(const std::string& layout_str) {
         } else {
             int64_t left_index = 0, right_index = 0;
             // Parse left and right parts
-            auto left_layout = ngraph::trim(layout.substr(0, ellipsis));
+            auto left_layout = ov::util::trim(layout.substr(0, ellipsis));
             if (!left_layout.empty()) {
                 OPENVINO_ASSERT(left_layout.at(left_layout.length() - 1) == ',',
                                 "Layout: Invalid left side (" + layout + ")");
                 left_layout = left_layout.substr(0, left_layout.length() - 1);
                 left_index = parse_commas(left_layout);
             }
-            auto right_layout = ngraph::trim(layout.substr(ellipsis + ELLIPSIS_LEN));
+            auto right_layout = ov::util::trim(layout.substr(ellipsis + ELLIPSIS_LEN));
             if (!right_layout.empty()) {
                 OPENVINO_ASSERT(right_layout.at(0) == ',', "Layout: Invalid right side (" + layout + ")");
                 right_layout = right_layout.substr(1, right_layout.length() - 1);
@@ -140,7 +141,7 @@ Layout::Layout(const std::string& layout_str) {
     auto dynamic_start = layout.find(ELLIPSIS);
     bool backward = false;
     int64_t index = -1;
-    for (auto i = 0; i < layout.length(); i++) {
+    for (size_t i = 0; i < layout.length(); i++) {
         index++;
         auto c = std::toupper(layout[i]);
         if (c == '?') {
@@ -294,7 +295,7 @@ std::vector<int64_t> LayoutUtils::find_permutation(const Layout& src_layout,
     auto rank = src_shape.rank();
     auto check_trivial = [](std::vector<int64_t>& res) -> std::vector<int64_t>& {
         size_t i = 0;
-        while (i < res.size() && res[i] == i) {
+        while (i < res.size() && res[i] == static_cast<int64_t>(i)) {
             i++;
         }
         if (i == res.size()) {
@@ -328,7 +329,7 @@ std::vector<int64_t> LayoutUtils::find_permutation(const Layout& src_layout,
             }
             new_index_map[new_ind] = item.second;
         }
-        res.m_index_map = new_index_map;
+        res.m_index_map = std::move(new_index_map);
         return res;
     };
     // Basic implementation so far, can support partially-specified layouts later (shape rank will be needed for dynamic
@@ -412,7 +413,7 @@ std::tuple<PartialShape, Layout> LayoutUtils::find_squeeze(const Layout& src_lay
 
     // Don't allow conversions like model_layout=NC??, tensor_layout=HWC
     // Though in future such conversions may be possible to implement
-    OPENVINO_ASSERT(src_layout.m_left_size == src_layout.m_index_map.size(),
+    OPENVINO_ASSERT(src_layout.m_left_size == static_cast<int64_t>(src_layout.m_index_map.size()),
                     "Layout conversion ",
                     dst_layout.to_string(),
                     " <-> ",
@@ -421,7 +422,7 @@ std::tuple<PartialShape, Layout> LayoutUtils::find_squeeze(const Layout& src_lay
                     src_layout.to_string());
 
     // Don't allow conversions like model_layout=NCHW, tensor_layout=?HW
-    OPENVINO_ASSERT(dst_layout.m_left_size == dst_layout.m_index_map.size(),
+    OPENVINO_ASSERT(dst_layout.m_left_size == static_cast<int64_t>(dst_layout.m_index_map.size()),
                     "Layout conversion ",
                     dst_layout.to_string(),
                     " <-> ",
@@ -440,13 +441,14 @@ std::tuple<PartialShape, Layout> LayoutUtils::find_squeeze(const Layout& src_lay
                     " != ",
                     src_shape.rank().get_length());
     // At this point src_layout and dst_layout don't have '...' or '?'
-    std::vector<Dimension> res_dims(dst_layout.m_left_size);
+    auto res_dims =
+        rank_dynamic ? PartialShape::dynamic() : PartialShape(std::vector<Dimension>(dst_layout.m_left_size));
     Layout res;
     res.m_dynamic = false;
     res.m_left_size = dst_layout.m_left_size;
     int64_t dst_idx = 0;
     for (int64_t src_idx = 0; src_idx < src_layout.m_left_size; src_idx++) {
-        auto src_dim_name = src_layout.m_index_map.at(src_idx);
+        const auto& src_dim_name = src_layout.m_index_map.at(src_idx);
         if (dst_layout.has_name(src_dim_name)) {
             if (!rank_dynamic) {
                 res_dims[dst_idx] = src_shape[src_idx];
@@ -474,11 +476,7 @@ std::tuple<PartialShape, Layout> LayoutUtils::find_squeeze(const Layout& src_lay
                         ". Missing dimensions are ",
                         missing_names.str());
     }
-    if (rank_dynamic) {
-        return {PartialShape::dynamic(), res};
-    } else {
-        return {PartialShape(res_dims), res};
-    }
+    return {std::move(res_dims), std::move(res)};
 }
 
 std::tuple<PartialShape, Layout, size_t> LayoutUtils::find_unsqueeze(const Layout& src_layout,
@@ -491,13 +489,14 @@ std::tuple<PartialShape, Layout, size_t> LayoutUtils::find_unsqueeze(const Layou
     // find_squeeze already performed necessary validation, no need to repeat here
     bool rank_dynamic = src_shape.rank().is_dynamic();
     auto dims_cnt = dst_layout.m_left_size - src_layout.m_left_size;
-    std::vector<Dimension> res_dims(dst_layout.m_left_size, 1);
+    auto res_dims =
+        rank_dynamic ? PartialShape::dynamic() : PartialShape(std::vector<Dimension>(dst_layout.m_left_size, 1));
     Layout res;
     res.m_dynamic = false;
     res.m_left_size = dst_layout.m_left_size;
     int64_t unset_idx = 0;
     for (auto i = 0; i < dst_layout.m_left_size; i++) {
-        auto dim_name = dst_layout.m_index_map.at(i);
+        const auto& dim_name = dst_layout.m_index_map.at(i);
         if (src_layout.has_name(dim_name)) {
             auto src_idx = src_layout.get_index_by_name(dim_name);
             res.m_names[dim_name] = src_idx + dims_cnt;
@@ -511,11 +510,7 @@ std::tuple<PartialShape, Layout, size_t> LayoutUtils::find_unsqueeze(const Layou
             unset_idx++;
         }
     }
-    if (rank_dynamic) {
-        return {PartialShape::dynamic(), res, dims_cnt};
-    } else {
-        return {PartialShape(res_dims), res, dims_cnt};
-    }
+    return {std::move(res_dims), std::move(res), dims_cnt};
 }
 
 bool LayoutUtils::is_compatible(const Layout& layout, const PartialShape& shape) {
@@ -609,7 +604,7 @@ ov::Layout get_layout(const ov::Output<ov::Node>& output) {
 
 void set_layout(ov::Output<ov::Node> output, const ov::Layout& layout) {
     OPENVINO_ASSERT(
-        dynamic_cast<ov::op::v0::Parameter*>(output.get_node()) || dynamic_cast<ov::op::v0::Result*>(output.get_node()),
+        ov::as_type<ov::op::v0::Parameter>(output.get_node()) || ov::as_type<ov::op::v0::Result>(output.get_node()),
         "Layout can be set only for Parameter and Result operations.");
     if (layout.empty()) {
         output.get_rt_info().erase(ov::LayoutAttribute::get_type_info_static());
@@ -639,7 +634,11 @@ void AttributeAdapter<ov::Layout>::set(const std::string& value) {
 bool LayoutAttribute::visit_attributes(AttributeVisitor& visitor) {
     std::string layout_str = value.to_string();
     visitor.on_attribute("layout", layout_str);
-    value = Layout(layout_str);
+    // some attribute visitor will not change the value
+    // for example, rt info serializer
+    // in this case, parallelization can be supported in hash pass
+    if (layout_str != value.to_string())
+        value = Layout(layout_str);
     return true;
 }
 

@@ -1,59 +1,38 @@
 # -*- coding: utf-8 -*-
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Tuple, Union, List
-
-import sys
-from pathlib import Path
-import numpy as np
-import openvino
-import openvino.runtime.opset8 as ops
 import pytest
-from openvino.runtime import Model, Core, Shape, Type
-from openvino.runtime.op import Parameter
-from openvino.utils import deprecated
+import os
+from pathlib import Path
+from openvino.utils import deprecated, get_cmake_path
+from tests.utils.helpers import compare_models, get_relu_model
 
 
-def get_test_model():
-    element_type = Type.f32
-    param = Parameter(element_type, Shape([1, 3, 22, 22]))
-    relu = ops.relu(param)
-    model = Model([relu], [param], "test")
-    assert model is not None
-    return model
-
-
-def test_compare_models():
+def test_compare_functions():
     try:
-        from openvino.test_utils import compare_models
-        model = get_test_model()
-        status, _ = compare_models(model, model)
+        from openvino.test_utils import compare_functions
+        model = get_relu_model()
+        status, _ = compare_functions(model, model)
         assert status
     except RuntimeError:
-        print("openvino.test_utils.compare_models is not available")  # noqa: T201
+        print("openvino.test_utils.compare_functions is not available")  # noqa: T201
 
 
-def generate_image(shape: Tuple = (1, 3, 32, 32), dtype: Union[str, np.dtype] = "float32") -> np.array:
-    np.random.seed(42)
-    return np.random.rand(*shape).astype(dtype)
+def test_compare_models_pass():
+    model = get_relu_model()
+    assert compare_models(model, model)
 
 
-def generate_relu_model(input_shape: List[int]) -> openvino.runtime.ie_api.CompiledModel:
-    param = ops.parameter(input_shape, np.float32, name="parameter")
-    relu = ops.relu(param, name="relu")
-    model = Model([relu], [param], "test")
-    model.get_ordered_ops()[2].friendly_name = "friendly"
+def test_compare_models_fail():
+    model = get_relu_model()
 
-    core = Core()
-    return core.compile_model(model, "CPU", {})
+    changed_model = model.clone()
+    changed_model.get_ordered_ops()[0].set_friendly_name("ABC")
 
-
-def generate_add_model() -> openvino._pyopenvino.Model:
-    param1 = ops.parameter(Shape([2, 1]), dtype=np.float32, name="data1")
-    param2 = ops.parameter(Shape([2, 1]), dtype=np.float32, name="data2")
-    add = ops.add(param1, param2)
-    return Model(add, [param1, param2], "TestFunction")
+    with pytest.raises(RuntimeError) as e:
+        _ = compare_models(model, changed_model)
+    assert "Not equal op names model_one: data, model_two: ABC." in str(e.value)
 
 
 def test_deprecation_decorator():
@@ -83,17 +62,35 @@ def test_deprecation_decorator():
         deprecated_function4()
 
 
-def create_filename_for_test(test_name, is_xml_path=False, is_bin_path=False):
-    """Return a tuple with automatically generated paths for xml and bin files.
+def test_cmake_file_found(monkeypatch):
+    fake_package_path = "/fake/site-packages/openvino"
 
-    :param test_name: Name used in generating.
-    :param is_xml_path: True if xml file should be pathlib.Path object, otherwise return string.
-    :param is_bin_path: True if bin file should be pathlib.Path object, otherwise return string.
-    :return: Tuple with two objects representing xml and bin files.
-    """
-    python_version = str(sys.version_info.major) + "_" + str(sys.version_info.minor)
-    filename = "./" + test_name.replace("test_", "").replace("[", "_").replace("]", "_")
-    filename = filename + "_" + python_version
-    _xml = Path(filename + ".xml") if is_xml_path else filename + ".xml"
-    _bin = Path(filename + ".bin") if is_bin_path else filename + ".bin"
-    return (_xml, _bin)
+    def mock_walk(path):
+        return [
+            ("/fake/site-packages/openvino/dir1", ("subdir",), ("OpenVINOConfig.cmake", "otherfile.txt")),
+            ("/fake/site-packages/openvino/dir2", ("subdir",), ("otherfile.txt",)),
+        ]
+
+    monkeypatch.setattr(Path, "parent", fake_package_path)
+    monkeypatch.setattr(os, "walk", mock_walk)
+
+    result = get_cmake_path()
+
+    assert result == f"{fake_package_path}/dir1"
+
+
+def test_cmake_file_not_found(monkeypatch):
+    fake_package_path = "/fake/site-packages/openvino"
+
+    def mock_walk(path):
+        return [
+            ("/fake/site-packages/openvino/dir1", ("subdir",), ("otherfile.txt", "OpenVINOConfig")),
+            ("/fake/site-packages/openvino/dir2", ("subdir",), ("otherfile.txt", "OpenVINO.cmake")),
+        ]
+
+    monkeypatch.setattr(Path, "parent", fake_package_path)
+    monkeypatch.setattr(os, "walk", mock_walk)
+
+    result = get_cmake_path()
+
+    assert result == ""

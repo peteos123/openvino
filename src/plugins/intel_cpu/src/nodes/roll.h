@@ -1,12 +1,10 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <ie_common.h>
-#include <node.h>
-#include <string>
+#include "node.h"
 
 namespace ov {
 namespace intel_cpu {
@@ -14,7 +12,7 @@ namespace node {
 
 class Roll : public Node {
 public:
-    Roll(const std::shared_ptr<ngraph::Node>& op, const GraphContext::CPtr context);
+    Roll(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr context);
 
     void getSupportedDescriptors() override;
     void initSupportedPrimitiveDescriptors() override;
@@ -24,17 +22,21 @@ public:
     void prepareParams() override;
     void executeDynamicImpl(dnnl::stream strm) override;
 
-    static bool isSupportedOperation(const std::shared_ptr<const ngraph::Node>& op, std::string& errorMessage) noexcept;
+    static bool isSupportedOperation(const std::shared_ptr<const ov::Node>& op, std::string& errorMessage) noexcept;
 
 private:
     struct RollExecutor {
-        RollExecutor(const VectorDims& dataDims, const VectorDims& shiftDims, const VectorDims& axesDims,
+        RollExecutor(const VectorDims& dataDims,
+                     const VectorDims& shiftDims,
+                     const VectorDims& axesDims,
                      const VectorDims& dstDims);
         ~RollExecutor() = default;
 
-        template<typename T>
-        void exec(const MemoryPtr& dataMemPtr, const MemoryPtr& shiftMemPtr, const MemoryPtr& axesMemPtr,
-                  MemoryPtr& dstMemPtr);
+        template <typename T>
+        void exec(const MemoryPtr& dataMemPtr,
+                  const MemoryPtr& shiftMemPtr,
+                  const MemoryPtr& axesMemPtr,
+                  const MemoryPtr& dstMemPtr);
 
     private:
         const size_t numOfDims;
@@ -54,6 +56,6 @@ private:
     static constexpr size_t AXES_INDEX = 2ul;
 };
 
-}   // namespace node
-}   // namespace intel_cpu
-}   // namespace ov
+}  // namespace node
+}  // namespace intel_cpu
+}  // namespace ov

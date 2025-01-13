@@ -1,4 +1,4 @@
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -17,15 +17,15 @@ pybind11_add_module(${TARGET_NAME} MODULE NO_EXTRAS ${SOURCES})
 
 add_dependencies(${TARGET_NAME} pyopenvino)
 
-if(COMMAND ie_add_vs_version_file)
-    ie_add_vs_version_file(NAME ${TARGET_NAME}
+if(COMMAND ov_add_vs_version_file)
+    ov_add_vs_version_file(NAME ${TARGET_NAME}
             FILEDESCRIPTION "Test Utils Python library")
 endif()
 
 if(OpenVINODeveloperPackage_FOUND)
     list(APPEND link_libraries openvino::commonTestUtils)
 else()
-    list(APPEND link_libraries commonTestUtils)
+    list(APPEND link_libraries common_test_utils)
 endif()
 
 target_include_directories(${TARGET_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -39,21 +39,21 @@ endif()
 # perform copy
 add_custom_command(TARGET ${TARGET_NAME}
         POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy ${OpenVINOPython_SOURCE_DIR}/src/openvino/test_utils/__init__.py ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/__init__.py
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${OpenVINOPython_SOURCE_DIR}/src/openvino/test_utils ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}
         )
 
-add_clang_format_target(${TARGET_NAME}_clang FOR_TARGETS ${TARGET_NAME}
-        EXCLUDE_PATTERNS ".*\\.cxx")
+ov_add_clang_format_target(${TARGET_NAME}_clang FOR_TARGETS ${TARGET_NAME}
+                           EXCLUDE_PATTERNS ".*\\.cxx")
 
 # install
 
 install(TARGETS ${TARGET_NAME}
         RUNTIME DESTINATION ${OV_CPACK_PYTHONDIR}/openvino/test_utils
         COMPONENT tests EXCLUDE_FROM_ALL
-        LIBRARY DESTINATION ${OV_CPACK_PYTHONDIR}/openvino/test_utils
+        LIBRARY DESTINATION tests/${OV_CPACK_PYTHONDIR}/openvino/test_utils
         COMPONENT tests EXCLUDE_FROM_ALL)
 
-install(PROGRAMS ${OpenVINOPython_SOURCE_DIR}/src/openvino/test_utils/__init__.py
-        DESTINATION ${OV_CPACK_PYTHONDIR}/openvino/test_utils
+install(DIRECTORY ${OpenVINOPython_SOURCE_DIR}/src/openvino/test_utils
+        DESTINATION tests/${OV_CPACK_PYTHONDIR}/openvino
         COMPONENT tests
         EXCLUDE_FROM_ALL)

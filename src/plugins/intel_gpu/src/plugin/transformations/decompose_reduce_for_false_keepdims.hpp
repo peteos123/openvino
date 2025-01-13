@@ -1,11 +1,11 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <ngraph/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
+#include "openvino/pass/graph_rewrite.hpp"
+#include "openvino/core/visibility.hpp"
 
 namespace ov {
 namespace intel_gpu {
@@ -15,8 +15,10 @@ namespace intel_gpu {
  *        A clDNN Reduce reorders un-reduced axes of its output tensor to b-f and spatial order when keep_dims is false.
  *        oneDNN reduction does not allow this. And clDNN execution shows a huge perf drop for blocked formats.
  */
-class DecomposeReduceForFalseKeepDims : public ngraph::pass::MatcherPass {
+class DecomposeReduceForFalseKeepDims : public ov::pass::MatcherPass {
 public:
+    OPENVINO_MATCHER_PASS_RTTI("DecomposeReduceForFalseKeepDims");
+
     // Decompose reduce if keep_dims is false and it reduces batch and spatial axes
     DecomposeReduceForFalseKeepDims();
 

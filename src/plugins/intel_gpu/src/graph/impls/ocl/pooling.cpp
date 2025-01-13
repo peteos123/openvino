@@ -1,16 +1,13 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "pooling_inst.h"
-#include "primitive_base.hpp"
-#include "impls/implementation_map.hpp"
-#include "intel_gpu/runtime/error_handler.hpp"
-#include "kernel_selector_helper.h"
-#include "pooling/pooling_kernel_selector.h"
+#include "openvino/core/validation_util.hpp"
 #include "pooling/pooling_kernel_base.h"
-#include "ngraph/validation_util.hpp"
-#include <algorithm>
+#include "pooling/pooling_kernel_selector.h"
+#include "pooling_inst.h"
+#include "pooling_shape_inference_util.hpp"
+#include "primitive_base.hpp"
 
 namespace cldnn {
 namespace ocl {
@@ -49,17 +46,22 @@ struct pooling_impl : typed_primitive_impl_ocl<pooling> {
     using parent = typed_primitive_impl_ocl<pooling>;
     using parent::parent;
     using kernel_selector_t = kernel_selector::pooling_kernel_selector;
-    using kernel_params_t = std::pair<kernel_selector::pooling_params, kernel_selector::pooling_optional_params>;
+    using kernel_params_t = kernel_selector::pooling_params;
 
-    DECLARE_OBJECT_TYPE_SERIALIZATION
+    DECLARE_OBJECT_TYPE_SERIALIZATION(cldnn::ocl::pooling_impl)
 
     std::unique_ptr<primitive_impl> clone() const override {
-        return make_unique<pooling_impl>(*this);
+        return make_deep_copy<pooling_impl, kernel_params_t>(*this);
     }
 
 protected:
     kernel_arguments_data get_arguments(const typed_primitive_inst<pooling>& instance) const override {
         kernel_arguments_data args = parent::get_arguments(instance);
+        // Legacy multi-output
+        if (instance.get_typed_desc<pooling>()->maxPoolOpset8Features) {
+            args.inputs = { instance.dep_memory_ptr(0) };
+            args.outputs.push_back(instance.dep_memory_ptr(1));
+        }
         return args;
     }
 
@@ -67,7 +69,6 @@ public:
     static kernel_params_t get_kernel_params(const kernel_impl_params& impl_param) {
         const auto& primitive = impl_param.typed_desc<pooling>();
         auto params = get_default_params<kernel_selector::pooling_params>(impl_param);
-        auto optional_params = get_default_optional_params<kernel_selector::pooling_optional_params>(impl_param.get_program());
 
         params.maxPoolOpset8Features = primitive->maxPoolOpset8Features;
         if (params.maxPoolOpset8Features) {
@@ -98,21 +99,12 @@ public:
         ov::CoordinateDiff pads_end(primitive->pads_end.begin(), primitive->pads_end.end());
         auto auto_pad = primitive->auto_pad;
 
-        if (auto_pad == ov::op::PadType::SAME_UPPER || auto_pad == ov::op::PadType::SAME_LOWER) {
-            pads_begin.clear();
-            pads_end.clear();
-            ngraph::try_apply_auto_padding(input_layout.get_partial_shape(),
-                                           kernel,
-                                           stride,
-                                           dilation,
-                                           auto_pad,
-                                           pads_end,
-                                           pads_begin);
-        }
-        if (auto_pad == ov::op::PadType::VALID) {
-            pads_begin = ov::CoordinateDiff(pads_begin.size(), 0);
-            pads_end = ov::CoordinateDiff(pads_end.size(), 0);
-        }
+        ov::op::v8::MaxPool op;
+        op.set_strides(stride);
+        op.set_kernel(kernel);
+        op.set_auto_pad(auto_pad);
+
+        ov::op::pooling::apply_padding(&op, input_layout.get_partial_shape(), dilation, pads_begin, pads_end);
 
         auto spatial_rank = output_layout.get_spatial_rank();
 
@@ -132,7 +124,7 @@ public:
         // adjusted to that, to work properly this calculation must take pad_end into account.
         auto dynamic_mode = false;
         for (size_t i = 0; i < spatial_rank; i++) {
-            dynamic_mode |= (((output_layout.spatial(i) - 1) * stride[spatial_rank - i - 1]) + primitive->size[spatial_rank - i - 1]) >
+            dynamic_mode |= (((output_layout.spatial(i) - 1) * stride[spatial_rank - i - 1]) + kernel[spatial_rank - i - 1]) >
                                  static_cast<size_t>(pads_end[spatial_rank - i - 1] + pads_begin[spatial_rank - i - 1] + input_layout.spatial(i));
         }
 
@@ -141,9 +133,9 @@ public:
         else
             pp.divMode = cldnn_2_kernel_divider_mode(primitive->mode);
 
-        uint32_t kernel_z = kernel.size() >= 3 ? kernel[kernel.size() - 3] : 1;
-        uint32_t kernel_y = kernel.size() >= 2 ? kernel[kernel.size() - 2] : 1;
-        uint32_t kernel_x = kernel.size() >= 1 ? kernel[kernel.size() - 1] : 1;
+        uint32_t kernel_z = kernel.size() >= 3 ? static_cast<uint32_t>(kernel[kernel.size() - 3]) : 1;
+        uint32_t kernel_y = kernel.size() >= 2 ? static_cast<uint32_t>(kernel[kernel.size() - 2]) : 1;
+        uint32_t kernel_x = kernel.size() >= 1 ? static_cast<uint32_t>(kernel[kernel.size() - 1]) : 1;
         pp.poolSize = {kernel_x, kernel_y, kernel_z};
 
         uint32_t pad_z = std::max<std::ptrdiff_t>(pads_begin.size() >= 3 ? pads_begin[pads_begin.size() - 3] : 0, 0);
@@ -151,25 +143,23 @@ public:
         uint32_t pad_x = std::max<std::ptrdiff_t>(pads_begin.size() >= 1 ? pads_begin[pads_begin.size() - 1] : 0, 0);
         pp.poolPad  = {pad_x, pad_y, pad_z};
 
-        uint32_t stride_z = stride.size() >= 3 ? stride[stride.size() - 3] : 1;
-        uint32_t stride_y = stride.size() >= 2 ? stride[stride.size() - 2] : 1;
-        uint32_t stride_x = stride.size() >= 1 ? stride[stride.size() - 1] : 1;
+        uint32_t stride_z = stride.size() >= 3 ? static_cast<uint32_t>(stride[stride.size() - 3]) : 1;
+        uint32_t stride_y = stride.size() >= 2 ? static_cast<uint32_t>(stride[stride.size() - 2]) : 1;
+        uint32_t stride_x = stride.size() >= 1 ? static_cast<uint32_t>(stride[stride.size() - 1]) : 1;
         pp.poolStride = {stride_x, stride_y, stride_z};
 
-        uint32_t dilation_z = dilation.size() >= 3 ? dilation[dilation.size() - 3] : 1;
-        uint32_t dilation_y = dilation.size() >= 2 ? dilation[dilation.size() - 2] : 1;
-        uint32_t dilation_x = dilation.size() >= 1 ? dilation[dilation.size() - 1] : 1;
+        uint32_t dilation_z = dilation.size() >= 3 ? static_cast<uint32_t>(dilation[dilation.size() - 3]) : 1;
+        uint32_t dilation_y = dilation.size() >= 2 ? static_cast<uint32_t>(dilation[dilation.size() - 2]) : 1;
+        uint32_t dilation_x = dilation.size() >= 1 ? static_cast<uint32_t>(dilation[dilation.size() - 1]) : 1;
         pp.poolDilation = {dilation_x, dilation_y, dilation_z};
 
-        return {params, optional_params};
+        return params;
     }
 };
 
 namespace detail {
 
 attach_pooling_impl::attach_pooling_impl() {
-    std::set<implementation_map<resample>::key_type> keys;
-
     auto types = { data_types::f16, data_types::f32, data_types::i8, data_types::u8 };
     auto formats = { format::bfyx,
                      format::byxf,
@@ -177,6 +167,7 @@ attach_pooling_impl::attach_pooling_impl() {
                      format::b_fs_yx_fsv4,
                      format::b_fs_yx_fsv16,
                      format::b_fs_yx_fsv32,
+                     format::fs_b_yx_fsv32,
                      format::bs_fs_yx_bsv16_fsv16,
                      format::bs_fs_yx_bsv16_fsv32,
                      format::bs_fs_yx_bsv32_fsv16,
@@ -190,14 +181,7 @@ attach_pooling_impl::attach_pooling_impl() {
                      format::bs_fs_zyx_bsv32_fsv16,
                      format::bs_fs_zyx_bsv32_fsv32 };
 
-    for (const auto type : types) {
-        for (const auto format : formats) {
-            keys.emplace(type, format);
-        }
-    }
-
-    keys.emplace(data_types::f16, format::fs_b_yx_fsv32);
-    keys.emplace(data_types::f32, format::fs_b_yx_fsv32);
+    auto keys = implementation_map<pooling>::combine(types, formats);
 
     implementation_map<pooling>::add(impl_types::ocl, typed_primitive_impl_ocl<pooling>::create<pooling_impl>, keys);
 }
@@ -207,3 +191,4 @@ attach_pooling_impl::attach_pooling_impl() {
 }  // namespace cldnn
 
 BIND_BINARY_BUFFER_WITH_TYPE(cldnn::ocl::pooling_impl)
+BIND_BINARY_BUFFER_WITH_TYPE(cldnn::pooling)

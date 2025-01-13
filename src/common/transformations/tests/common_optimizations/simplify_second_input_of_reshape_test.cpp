@@ -1,20 +1,20 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include <gtest/gtest.h>
 
 #include <memory>
-#include <ngraph/function.hpp>
-#include <ngraph/opsets/opset7.hpp>
-#include <ngraph/pass/manager.hpp>
-#include <transformations/common_optimizations/simplify_shape_of_sub_graph.hpp>
-#include <transformations/init_node_info.hpp>
 
-#include "common_test_utils/ngraph_test_utils.hpp"
+#include "common_test_utils/ov_test_utils.hpp"
+#include "openvino/core/model.hpp"
+#include "openvino/opsets/opset7.hpp"
+#include "openvino/pass/manager.hpp"
+#include "transformations/common_optimizations/simplify_shape_of_sub_graph.hpp"
+#include "transformations/init_node_info.hpp"
 
 using namespace testing;
-using namespace ngraph;
+using namespace ov;
 
 namespace {
 auto gather = [](const std::shared_ptr<Node> input, std::vector<int64_t> indices) -> Output<Node> {
@@ -43,15 +43,15 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest1) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{3}, {0, 0, 768});
         auto reshape = std::make_shared<opset7::Reshape>(data, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -68,16 +68,16 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest2) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(fq, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto fq = fake_quantize(data);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{3}, {0, 0, 768});
         auto reshape = std::make_shared<opset7::Reshape>(fq, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -94,15 +94,15 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest3) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant_1, constant_2}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{4}, {0, 0, 12, 64});
         auto reshape = std::make_shared<opset7::Reshape>(data, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -120,16 +120,16 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest4) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant_1, constant_2}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(fq, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto fq = fake_quantize(data);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{4}, {0, 0, 12, 64});
         auto reshape = std::make_shared<opset7::Reshape>(fq, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -145,15 +145,15 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest5) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{3}, {0, 0, -1});
         auto reshape = std::make_shared<opset7::Reshape>(data, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -169,15 +169,15 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest6) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{3}, {0, 0, -1});
         auto reshape = std::make_shared<opset7::Reshape>(data, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -194,15 +194,15 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest7) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{constant_1, constant_2, gather_op}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{4}, {64, 2, 0, 0});
         auto reshape = std::make_shared<opset7::Reshape>(data, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -220,15 +220,15 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest8) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{constant_1, constant_2, gather_op, constant_3}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{4}, {64, 2, 0, 64});
         auto reshape = std::make_shared<opset7::Reshape>(data, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -244,9 +244,9 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest9) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -264,9 +264,9 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest10) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op_1, gather_op_2, gather_op_3}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
@@ -278,7 +278,7 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest10) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{constant, gather_op_2, gather_op_3}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -291,23 +291,23 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest11) {
         auto shape_of_1 = std::make_shared<opset7::ShapeOf>(data);
         auto shape_of_2 = std::make_shared<opset7::ShapeOf>(data);
         auto concat_input_0 = gather(shape_of_1, std::vector<int64_t>{0});
-        auto concat_input_1 = ngraph::opset7::Constant::create(ngraph::element::i64, {1}, {64});
+        auto concat_input_1 = opset7::Constant::create(element::i64, {1}, {64});
         auto concat_input_2 = gather(shape_of_2, std::vector<int64_t>{2});
-        auto concat_input_3 = ngraph::opset7::Constant::create(ngraph::element::i64, {1}, {128});
+        auto concat_input_3 = opset7::Constant::create(element::i64, {1}, {128});
         auto concat = std::make_shared<opset7::Concat>(
             OutputVector{concat_input_0, concat_input_1, concat_input_2, concat_input_3},
             0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto constant = opset7::Constant::create(element::i64, Shape{4}, {0, 64, 0, 128});
         auto reshape = std::make_shared<opset7::Reshape>(data, constant, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -325,16 +325,16 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest12) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant_1, constant_2}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(gelu, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto gelu = std::make_shared<opset7::Gelu>(data);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{4}, {0, 0, 12, 64});
         auto reshape = std::make_shared<opset7::Reshape>(gelu, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -350,15 +350,15 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest13) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto reshape_pattern = opset7::Constant::create(element::i32, Shape{3}, {0, 0, 768});
         auto reshape = std::make_shared<opset7::Reshape>(data, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -368,21 +368,21 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest14) {
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
 
-        auto shape_of = std::make_shared<opset1::ShapeOf>(data);
+        auto shape_of = std::make_shared<ov::op::v0::ShapeOf>(data);
         auto gather_op = gather(shape_of, std::vector<int64_t>{0, 1});
         auto constant = opset7::Constant::create(element::i64, Shape{1}, {768});
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{3}, {0, 0, 768});
         auto reshape = std::make_shared<opset7::Reshape>(data, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -399,16 +399,16 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest15) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(gelu, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto gelu = std::make_shared<opset7::Gelu>(data);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{4}, {0, 0, 12, 64});
         auto reshape = std::make_shared<opset7::Reshape>(gelu, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -425,15 +425,15 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest16) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op_1, gather_op_2, constant}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{3}, {0, 0, 768});
         auto reshape = std::make_shared<opset7::Reshape>(data, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -456,9 +456,9 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest17) {
             std::make_shared<opset7::Concat>(OutputVector{gather_op_1, constant_1, constant_2, gather_op_2}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data_2, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data_1, data_2});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data_1, data_2});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -480,9 +480,9 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest18) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_1, constant, gather_2}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
 
     {
@@ -495,7 +495,7 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest18) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_1, constant, gather_2}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -517,9 +517,9 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest19) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_1, constant, gather_2}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
 
     {
@@ -532,7 +532,7 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest19) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_1, constant, gather_2}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -562,9 +562,9 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest20) {
             std::make_shared<opset7::Concat>(OutputVector{gather_1, constant_1, gather_2, constant_2, gather_3}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data, data_copy});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data, data_copy});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
 
     {
@@ -583,7 +583,7 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest20) {
             std::make_shared<opset7::Concat>(OutputVector{gather_1, constant_1, gather_2, constant_2, gather_3}, 0);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data, data_copy});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data, data_copy});
     }
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }
@@ -599,15 +599,65 @@ TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTest21) {
         auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant}, -1);
 
         auto reshape = std::make_shared<opset7::Reshape>(data, concat, true);
-        function = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
 
-        manager.register_pass<pass::SimplifySecondInputOfReshape>();
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
     }
     {
         auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
         auto reshape_pattern = opset7::Constant::create(element::i64, Shape{3}, {0, 0, 768});
         auto reshape = std::make_shared<opset7::Reshape>(data, reshape_pattern, true);
-        function_ref = std::make_shared<Function>(NodeVector{reshape}, ParameterVector{data});
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
     }
+    comparator.enable(FunctionsComparator::CONST_VALUES);
+}
+
+TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTestFalseSpecialZero) {
+    PartialShape data_shape{1, 128, 12, 64};
+    {
+        auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
+
+        auto shape_of = std::make_shared<opset7::ShapeOf>(data);
+        auto gather_op = gather(shape_of, std::vector<int64_t>{0, 1});
+        auto constant = opset7::Constant::create(element::i64, Shape{1}, {768});
+        auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant}, -1);
+
+        auto reshape = std::make_shared<opset7::Reshape>(data, concat, false);
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
+
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
+    }
+    {
+        auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
+        auto reshape_pattern = opset7::Constant::create(element::i64, Shape{3}, {0, 0, 768});
+        auto reshape = std::make_shared<opset7::Reshape>(data, reshape_pattern, true);
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
+    }
+    comparator.enable(FunctionsComparator::ATTRIBUTES);
+    comparator.enable(FunctionsComparator::CONST_VALUES);
+}
+
+TEST_F(TransformationTestsF, SimplifySecondInputOfReshapeTestFalseSpecialZeroZeroDim) {
+    PartialShape data_shape{1, 0, 12, 64};
+    {
+        auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
+
+        auto shape_of = std::make_shared<opset7::ShapeOf>(data);
+        auto gather_op = gather(shape_of, std::vector<int64_t>{0, 1});
+        auto constant = opset7::Constant::create(element::i64, Shape{1}, {768});
+        auto concat = std::make_shared<opset7::Concat>(OutputVector{gather_op, constant}, -1);
+
+        auto reshape = std::make_shared<opset7::Reshape>(data, concat, false);
+        model = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
+
+        manager.register_pass<ov::pass::SimplifySecondInputOfReshape>();
+    }
+    {
+        auto data = std::make_shared<opset7::Parameter>(element::f32, data_shape);
+        auto reshape_pattern = opset7::Constant::create(element::i64, Shape{3}, {0, 0, 768});
+        auto reshape = std::make_shared<opset7::Reshape>(data, reshape_pattern, true);
+        model_ref = std::make_shared<Model>(NodeVector{reshape}, ParameterVector{data});
+    }
+    comparator.enable(FunctionsComparator::ATTRIBUTES);
     comparator.enable(FunctionsComparator::CONST_VALUES);
 }

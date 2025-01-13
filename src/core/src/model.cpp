@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -8,18 +8,13 @@
 #include <string>
 #include <unordered_map>
 
+#include "evaluator.hpp"
 #include "itt.hpp"
 #include "layout_utils.hpp"
-#include "meta_data.hpp"
-#include "ngraph/evaluator.hpp"
-#include "ngraph/function.hpp"
-#include "ngraph/graph_util.hpp"
-#include "ngraph/log.hpp"
-#include "ngraph/ops.hpp"
-#include "ngraph/opsets/opset7.hpp"
-#include "ngraph/validation_util.hpp"
 #include "openvino/core/attribute_visitor.hpp"
 #include "openvino/core/except.hpp"
+#include "openvino/core/graph_util.hpp"
+#include "openvino/core/meta_data.hpp"
 #include "openvino/core/partial_shape.hpp"
 #include "openvino/op/parameter.hpp"
 #include "openvino/op/util/op_types.hpp"
@@ -45,12 +40,13 @@ void check_all_variables_registered(const std::vector<shared_ptr<ov::Node>>& ord
             std::find(variables.begin(), variables.end(), variable_op->get_variable()) == variables.end())
             unregistered_variables << variable_op->get_variable_id() << std::endl;
     }
-    if (!unregistered_variables.str().empty())
-        throw ov::Exception("Model references undeclared variables: " + unregistered_variables.str());
+    OPENVINO_ASSERT(unregistered_variables.str().empty(),
+                    "Model references undeclared variables: ",
+                    unregistered_variables.str());
 }
 
 void check_all_parameters_registered(const std::vector<shared_ptr<ov::Node>>& ordered_ops,
-                                     const ngraph::ParameterVector& parameters) {
+                                     const ov::ParameterVector& parameters) {
     OV_ITT_SCOPED_TASK(ov::itt::domains::core, "Model::check_all_parameters_registered");
 
     std::stringstream unregistered_parameters;
@@ -59,8 +55,9 @@ void check_all_parameters_registered(const std::vector<shared_ptr<ov::Node>>& or
             std::find(parameters.begin(), parameters.end(), node) == parameters.end())
             unregistered_parameters << node << std::endl;
     }
-    if (!unregistered_parameters.str().empty())
-        throw ov::Exception("Model references undeclared parameters: " + unregistered_parameters.str());
+    OPENVINO_ASSERT(unregistered_parameters.str().empty(),
+                    "Model references undeclared parameters: ",
+                    unregistered_parameters.str());
 }
 
 ov::op::util::VariableVector auto_detect_variables(const std::vector<std::shared_ptr<ov::Node>>& ordered_ops) {
@@ -74,58 +71,99 @@ ov::op::util::VariableVector auto_detect_variables(const std::vector<std::shared
     return ov::op::util::VariableVector(variables.begin(), variables.end());
 }
 
-ngraph::ParameterVector auto_detect_parameters(const std::vector<std::shared_ptr<ov::Node>>& ordered_ops) {
+ov::ParameterVector auto_detect_parameters(const std::vector<std::shared_ptr<ov::Node>>& ordered_ops) {
     OV_ITT_SCOPED_TASK(ov::itt::domains::core, "Model::auto_detect_parameters");
-    ngraph::ParameterVector parameter_vector;
+    ov::ParameterVector parameter_vector;
     for (const auto& op : ordered_ops) {
-        if (const auto& param = dynamic_pointer_cast<ngraph::opset7::Parameter>(op)) {
+        if (const auto& param = ov::as_type_ptr<ov::op::v0::Parameter>(op)) {
             parameter_vector.push_back(param);
         }
     }
     return parameter_vector;
 }
 
+// Check that a Node argument for ctor isn't nullptr.
+const std::shared_ptr<ov::Node>& verify_node(const std::shared_ptr<ov::Node>& node) {
+    OPENVINO_ASSERT(node != nullptr, "Model is incorrect! Some Node equals to nullptr.");
+    return node;
+}
+
+std::map<ov::Output<ov::Node>, ov::PartialShape> port_shapes_to_node_shapes(
+    ov::Model* model,
+    const std::map<size_t, ov::PartialShape>& partial_shapes) {
+    std::map<ov::Output<ov::Node>, ov::PartialShape> node_shapes;
+    for (const auto& it : partial_shapes) {
+        const auto port = model->input(it.first);
+        node_shapes[port] = it.second;
+    }
+    return node_shapes;
+}
+
+std::map<ov::Output<ov::Node>, ov::PartialShape> tensor_names_shapes_to_node_shapes(
+    ov::Model* model,
+    const std::map<std::string, ov::PartialShape>& partial_shapes) {
+    std::map<ov::Output<ov::Node>, ov::PartialShape> const_pshape;
+    std::unordered_map<ov::Node*, std::string> port_tensor_map;
+    for (const auto& it : partial_shapes) {
+        const auto port = model->input(it.first);
+        if (port_tensor_map.find(port.get_node()) != port_tensor_map.end()) {
+            OPENVINO_ASSERT(it.second == const_pshape.at(port),
+                            "Tensor with names {'",
+                            it.first,
+                            "', '",
+                            port_tensor_map[port.get_node()],
+                            "'} has "
+                            "conflicting shapes ",
+                            it.second,
+                            " and ",
+                            const_pshape.at(port),
+                            ", but they define the same tensor");
+        }
+        port_tensor_map[port.get_node()] = it.first;
+        const_pshape[port] = it.second;
+    }
+    return const_pshape;
+}
+
 }  // namespace
 
-ov::Model::Model(const ResultVector& results, const ngraph::ParameterVector& parameters, const std::string& name)
+ov::Model::Model(const ResultVector& results, const ov::ParameterVector& parameters, const std::string& name)
     : m_name(name),
       m_unique_name("Model" + to_string(m_next_instance_id.fetch_add(1))),
-      m_topological_sorter(ngraph::topological_sort<std::vector<std::shared_ptr<ov::Node>>>),
+      m_topological_sorter(ov::topological_sort<std::vector<std::shared_ptr<ov::Node>>>),
       m_results(results),
       m_parameters(parameters) {
     prerequirements(true, false);
 }
 
-ov::Model::Model(const OutputVector& results, const ngraph::ParameterVector& parameters, const std::string& name)
+ov::Model::Model(const OutputVector& results, const ov::ParameterVector& parameters, const std::string& name)
     : m_name(name),
       m_unique_name("Model" + to_string(m_next_instance_id.fetch_add(1))),
-      m_topological_sorter(ngraph::topological_sort<std::vector<std::shared_ptr<ov::Node>>>),
+      m_topological_sorter(ov::topological_sort<std::vector<std::shared_ptr<ov::Node>>>),
       m_results(as_result_vector(results)),
       m_parameters(parameters) {
     prerequirements(true, false);
 }
 
-ov::Model::Model(const NodeVector& results, const ngraph::ParameterVector& parameters, const std::string& name)
+ov::Model::Model(const NodeVector& results, const ov::ParameterVector& parameters, const std::string& name)
     : m_name(name),
       m_unique_name("Model" + to_string(m_next_instance_id.fetch_add(1))),
-      m_topological_sorter(ngraph::topological_sort<std::vector<std::shared_ptr<ov::Node>>>),
+      m_topological_sorter(ov::topological_sort<std::vector<std::shared_ptr<ov::Node>>>),
       m_results(as_result_vector(as_output_vector(results))),
       m_parameters(parameters) {
     prerequirements(true, false);
 }
 
-ov::Model::Model(const std::shared_ptr<Node>& result,
-                 const ngraph::ParameterVector& parameters,
-                 const std::string& name)
-    : Model(result->outputs(), parameters, name) {}
+ov::Model::Model(const std::shared_ptr<Node>& result, const ov::ParameterVector& parameters, const std::string& name)
+    : Model(verify_node(result)->outputs(), parameters, name) {}
 
-ov::Model::Model(const ngraph::ResultVector& results,
-                 const ngraph::SinkVector& sinks,
-                 const ngraph::ParameterVector& parameters,
+ov::Model::Model(const ov::ResultVector& results,
+                 const ov::SinkVector& sinks,
+                 const ov::ParameterVector& parameters,
                  const std::string& name)
     : m_name(name),
       m_unique_name("Model" + to_string(m_next_instance_id.fetch_add(1))),
-      m_topological_sorter(ngraph::topological_sort<std::vector<std::shared_ptr<Node>>>),
+      m_topological_sorter(ov::topological_sort<std::vector<std::shared_ptr<Node>>>),
       m_results(results),
       m_sinks(sinks),
       m_parameters(parameters) {
@@ -133,19 +171,19 @@ ov::Model::Model(const ngraph::ResultVector& results,
 }
 
 ov::Model::Model(const OutputVector& results,
-                 const ngraph::SinkVector& sinks,
-                 const ngraph::ParameterVector& parameters,
+                 const ov::SinkVector& sinks,
+                 const ov::ParameterVector& parameters,
                  const std::string& name)
     : Model(as_result_vector(results), sinks, parameters, name) {}
 
-ov::Model::Model(const ngraph::ResultVector& results,
-                 const ngraph::SinkVector& sinks,
-                 const ngraph::ParameterVector& parameters,
-                 const ngraph::VariableVector& variables,
+ov::Model::Model(const ov::ResultVector& results,
+                 const ov::SinkVector& sinks,
+                 const ov::ParameterVector& parameters,
+                 const ov::op::util::VariableVector& variables,
                  const std::string& name)
     : m_name(name),
       m_unique_name("Model" + to_string(m_next_instance_id.fetch_add(1))),
-      m_topological_sorter(ngraph::topological_sort<std::vector<std::shared_ptr<Node>>>),
+      m_topological_sorter(ov::topological_sort<std::vector<std::shared_ptr<Node>>>),
       m_results(results),
       m_sinks(sinks),
       m_parameters(parameters),
@@ -154,37 +192,53 @@ ov::Model::Model(const ngraph::ResultVector& results,
 }
 
 ov::Model::Model(const OutputVector& results,
-                 const ngraph::SinkVector& sinks,
-                 const ngraph::ParameterVector& parameters,
-                 const ngraph::VariableVector& variables,
+                 const ov::SinkVector& sinks,
+                 const ov::ParameterVector& parameters,
+                 const ov::op::util::VariableVector& variables,
                  const std::string& name)
     : Model(as_result_vector(results), sinks, parameters, variables, name) {}
 
-ov::Model::Model(const ngraph::OutputVector& results,
-                 const ngraph::ParameterVector& parameters,
-                 const ngraph::VariableVector& variables,
+ov::Model::Model(const ov::OutputVector& results,
+                 const ov::ParameterVector& parameters,
+                 const ov::op::util::VariableVector& variables,
                  const std::string& name)
     : Model(as_result_vector(results), {}, parameters, variables, name) {}
 
-ov::Model::Model(const ngraph::ResultVector& results,
-                 const ngraph::ParameterVector& parameters,
-                 const ngraph::VariableVector& variables,
+ov::Model::Model(const ov::ResultVector& results,
+                 const ov::ParameterVector& parameters,
+                 const ov::op::util::VariableVector& variables,
                  const std::string& name)
     : Model(results, {}, parameters, variables, name) {}
 
-ov::Model::Model(const ngraph::OutputVector& results, const ngraph::SinkVector& sinks, const string& name)
+ov::Model::Model(const ov::OutputVector& results, const ov::SinkVector& sinks, const string& name)
     : m_name(name),
       m_unique_name("Model" + to_string(m_next_instance_id.fetch_add(1))),
-      m_topological_sorter(ngraph::topological_sort<std::vector<std::shared_ptr<Node>>>),
+      m_topological_sorter(ov::topological_sort<std::vector<std::shared_ptr<Node>>>),
       m_results(as_result_vector(results)),
       m_sinks(sinks) {
     prerequirements(true, true);
 }
 
-ov::Model::Model(const OutputVector& results, const string& name) : Model(results, ngraph::SinkVector{}, name) {}
+ov::Model::Model(const OutputVector& results, const string& name) : Model(results, ov::SinkVector{}, name) {}
 
 void ov::Model::prerequirements(bool detect_variables, bool detect_parameters) {
     OV_ITT_SCOPED_TASK(ov::itt::domains::core, "Model::prerequirements");
+
+    for (const auto& param : m_parameters) {
+        OPENVINO_ASSERT(param != nullptr, "Model is incorrect! Some Parameter operation equals to nullptr.");
+    }
+
+    for (const auto& result : m_results) {
+        OPENVINO_ASSERT(result != nullptr, "Model is incorrect! Some Result operation equals to nullptr.");
+    }
+
+    for (const auto& sink : m_sinks) {
+        OPENVINO_ASSERT(sink != nullptr, "Model is incorrect! Some Sink operation equals to nullptr.");
+    }
+
+    for (const auto& variable : m_variables) {
+        OPENVINO_ASSERT(variable != nullptr, "Model is incorrect! Some Variable equals to nullptr.");
+    }
 
     m_shared_rt_info = std::make_shared<SharedRTInfo>();
 
@@ -203,11 +257,6 @@ void ov::Model::prerequirements(bool detect_variables, bool detect_parameters) {
 void ov::Model::validate_nodes_and_infer_types() const {
     OV_ITT_SCOPED_TASK(ov::itt::domains::core, "Model::validate_nodes_and_infer_types");
 
-    struct Counter {
-        int cnt_assign = 0;
-        int cnt_read_val = 0;
-    };
-    std::map<ov::op::util::Variable*, Counter> pair_checker;
     std::stringstream unregistered_parameters;
     std::stringstream unregistered_variables;
     std::unordered_set<const ov::descriptor::Tensor*> tensors;
@@ -229,26 +278,16 @@ void ov::Model::validate_nodes_and_infer_types() const {
         if (variable_op &&
             std::find(m_variables.begin(), m_variables.end(), variable_op->get_variable()) == m_variables.end())
             unregistered_variables << variable_op->get_variable_id() << std::endl;
-
-        if (const auto& assign = std::dynamic_pointer_cast<ngraph::op::AssignBase>(node)) {
-            pair_checker[assign->get_variable().get()].cnt_assign++;
-        } else if (const auto& read_value = std::dynamic_pointer_cast<ngraph::op::ReadValueBase>(node)) {
-            pair_checker[read_value->get_variable().get()].cnt_read_val++;
-        }
     }
 
-    if (!unregistered_parameters.str().empty())
-        throw ov::Exception("Model references undeclared parameters: " + unregistered_parameters.str());
+    OPENVINO_ASSERT(unregistered_parameters.str().empty(),
+                    "Model references undeclared parameters: ",
+                    unregistered_parameters.str());
 
-    if (!unregistered_variables.str().empty())
-        throw ov::Exception("Model references undeclared Variables: " + unregistered_variables.str());
-    bool only_pairs =
-        std::all_of(pair_checker.begin(), pair_checker.end(), [](const std::pair<op::util::Variable*, Counter>& val) {
-            return val.second.cnt_assign == 1 && val.second.cnt_read_val == 1;
-        });
-    if (!only_pairs)
-        throw ov::Exception("Model is incorrect. Assign and ReadValue operations must be in pairs on the "
-                            "network.");
+    OPENVINO_ASSERT(unregistered_variables.str().empty(),
+                    "Model references undeclared Variables: ",
+                    unregistered_variables.str());
+
     for (const auto& output : outputs()) {
         OPENVINO_ASSERT(ov::layout::utils::is_compatible(ov::layout::get_layout(output), output.get_partial_shape()),
                         "Result '",
@@ -291,6 +330,7 @@ std::vector<shared_ptr<ov::Node>> ov::Model::get_ordered_ops() const {
     m_cached_ordered_ops.clear();
     for_each(order.cbegin(), order.cend(), [this](const shared_ptr<Node>& node) {
         m_cached_ordered_ops.push_back(node);
+        m_cached_ops.insert(node.get());
         node->insert_info(m_shared_rt_info);
     });
     m_cached_output_names.clear();
@@ -369,22 +409,20 @@ shared_ptr<ov::Node> ov::Model::get_output_op(size_t i) const {
 }
 
 shared_ptr<ov::Node> ov::Model::get_result() const {
-    if (m_results.size() != 1) {
-        throw ov::Exception("get_result() must be called on a Model with exactly one result.");
-    }
+    OPENVINO_ASSERT(m_results.size() == 1, "get_result() must be called on a Model with exactly one result.");
     return m_results.at(0);
 }
 
 std::vector<shared_ptr<ov::Node>> ov::Model::get_ops() const {
     std::vector<std::shared_ptr<Node>> ops;
-    ngraph::traverse_nodes(this, [&](shared_ptr<Node> node) {
+    ov::traverse_nodes(this, [&](shared_ptr<Node> node) {
         ops.push_back(node);
     });
     return ops;
 }
 
 void ov::Model::replace_node(std::shared_ptr<Node> old, std::shared_ptr<Node> repl) {
-    ngraph::replace_node(old, repl);
+    ov::replace_node(old, repl);
 }
 
 size_t ov::Model::get_graph_size() const {
@@ -414,24 +452,24 @@ bool ov::Model::is_dynamic() const {
     return false;
 }
 
-void ov::Model::replace_parameter(size_t parameter_index, const shared_ptr<ngraph::op::Parameter>& parameter) {
-    NGRAPH_CHECK(parameter_index < m_parameters.size(),
-                 "replace_parameter(): Tried to replace parameter at index ",
-                 parameter_index,
-                 " but the Model only has ",
-                 m_parameters.size(),
-                 " parameters.");
+void ov::Model::replace_parameter(size_t parameter_index, const shared_ptr<ov::op::v0::Parameter>& parameter) {
+    OPENVINO_ASSERT(parameter_index < m_parameters.size(),
+                    "replace_parameter(): Tried to replace parameter at index ",
+                    parameter_index,
+                    " but the Model only has ",
+                    m_parameters.size(),
+                    " parameters.");
     replace_node(m_parameters[parameter_index], parameter);
     m_parameters[parameter_index] = parameter;
 }
 
 void ov::Model::set_topological_sort(topological_sort_t sorter) {
-    m_topological_sorter = sorter;
+    m_topological_sorter = std::move(sorter);
     // reset topological nodes order cache as new sorter can have different behaviour
     m_shared_rt_info->set_use_topological_cache(false);
 }
 
-int64_t ov::Model::get_parameter_index(const std::shared_ptr<ngraph::op::Parameter>& parameter) const {
+int64_t ov::Model::get_parameter_index(const std::shared_ptr<ov::op::v0::Parameter>& parameter) const {
     int64_t pos = 0;
     for (auto p : get_parameters()) {
         if (p == parameter) {
@@ -448,7 +486,7 @@ int64_t ov::Model::get_result_index(const Output<Node>& value) const {
 
 int64_t ov::Model::get_result_index(const Output<const Node>& value) const {
     int64_t pos = 0;
-    if (is_type<ngraph::op::Result>(value.get_node_shared_ptr())) {
+    if (is_type<ov::op::v0::Result>(value.get_node_shared_ptr())) {
         auto result = value.get_node_shared_ptr();
         for (auto r : get_results()) {
             if (r == result) {
@@ -469,60 +507,29 @@ int64_t ov::Model::get_result_index(const Output<const Node>& value) const {
     return -1;
 }
 
-namespace {
-
-inline ov::Tensor create_tmp_tensor(const ngraph::HostTensorPtr& tensor) {
-    if (tensor->get_partial_shape().is_static()) {
-        ov::Shape shape = tensor->get_shape();
-        return std::move(ov::Tensor(tensor->get_element_type(), shape, tensor->get_data_ptr()));
-    } else {
-        if (tensor->get_element_type().is_dynamic()) {
-            return std::move(ov::Tensor());
-        } else {
-            return std::move(ov::Tensor(tensor->get_element_type(), {0}));
-        }
-    }
-}
-inline ov::TensorVector create_tmp_tensors(const ngraph::HostTensorVector& tensors) {
-    ov::TensorVector result;
-    result.reserve(tensors.size());
-    for (const auto& tensor : tensors) {
-        result.emplace_back(create_tmp_tensor(tensor));
-    }
-    return std::move(result);
-}
-
-inline void update_output_tensors(const ngraph::HostTensorVector& output_values, const ov::TensorVector& outputs) {
-    OPENVINO_ASSERT(output_values.size(), outputs.size());
-    for (size_t i = 0; i < outputs.size(); i++) {
-        const auto& tensor = output_values[i];
-        if (tensor->get_partial_shape().is_dynamic()) {
-            tensor->set_element_type(outputs[i].get_element_type());
-            tensor->set_shape(outputs[i].get_shape());
-            void* dst_data = tensor->get_data_ptr();
-            memcpy(dst_data, outputs[i].data(), tensor->get_size_in_bytes());
-        }
-    }
-}
-}  // namespace
-
-bool ov::Model::evaluate(const HostTensorVector& output_tensors,
-                         const HostTensorVector& input_tensors,
-                         EvaluationContext evaluation_context) const {
-    ov::TensorVector outputs = create_tmp_tensors(output_tensors);
-    ov::TensorVector inputs = create_tmp_tensors(input_tensors);
-    bool sts = evaluate(outputs, inputs, std::move(evaluation_context));
-    update_output_tensors(output_tensors, outputs);
-    return sts;
+bool ov::Model::evaluate(ov::TensorVector& output_tensors, const ov::TensorVector& input_tensors) const {
+    ov::EvaluationContext evaluation_context;
+    return evaluate(output_tensors, input_tensors, evaluation_context);
 }
 
 bool ov::Model::evaluate(ov::TensorVector& output_tensors,
                          const ov::TensorVector& input_tensors,
-                         ov::EvaluationContext evaluation_context) const {
+                         ov::EvaluationContext& evaluation_context) const {
     evaluation_context.emplace("VariableContext", ov::op::util::VariableContext());
     std::map<RawNodeOutput, ov::Tensor> value_map;
+    OPENVINO_ASSERT(input_tensors.size() == m_parameters.size(),
+                    "Cannot evaluate model! Number of tensors (",
+                    input_tensors.size(),
+                    ") is not equal to number of parameters (",
+                    m_parameters.size(),
+                    ").");
     for (size_t i = 0; i < m_parameters.size(); ++i) {
         value_map[m_parameters.at(i)->output(0)] = input_tensors.at(i);
+        OPENVINO_ASSERT(m_parameters.at(i)->get_partial_shape().is_dynamic() ||
+                            m_parameters.at(i)->get_partial_shape().to_shape() == input_tensors[i].get_shape(),
+                        "Cannot evaluate model! Tensor input shape and Parameter op with index ",
+                        i,
+                        " are mismatches.");
     }
     OutputVector outputs;
     std::map<RawNodeOutput, ov::Tensor> output_tensor_map;
@@ -535,8 +542,7 @@ bool ov::Model::evaluate(ov::TensorVector& output_tensors,
         outputs.push_back(m_sink);
     }
     // evaluate nodes
-    OPENVINO_SUPPRESS_DEPRECATED_START
-    ngraph::Evaluator<ov::Tensor> evaluator({}, value_map);
+    Evaluator<Tensor> evaluator({}, value_map);
     evaluator.set_universal_handler(
         [&output_tensor_map, &evaluation_context](Node* node,
                                                   const ov::TensorVector& input_tensors) -> ov::TensorVector {
@@ -544,13 +550,7 @@ bool ov::Model::evaluate(ov::TensorVector& output_tensors,
             for (const auto& v : node->outputs()) {
                 auto it = output_tensor_map.find(v);
                 if (it == output_tensor_map.end()) {
-                    if (v.get_partial_shape().is_dynamic() || v.get_element_type().is_dynamic()) {
-                        ov::Tensor c = create_tmp_tensor(std::make_shared<HostTensor>(v));
-                        output_tensors.push_back(c);
-                    } else {
-                        ov::Tensor c(v.get_element_type(), v.get_shape());
-                        output_tensors.push_back(c);
-                    }
+                    output_tensors.emplace_back(v);
                 } else {
                     output_tensors.push_back(it->second);
                 }
@@ -565,13 +565,12 @@ bool ov::Model::evaluate(ov::TensorVector& output_tensors,
                 }
                 return output_tensors;
             } else {
-                OPENVINO_ASSERT(false, "Evaluation failed on ", node);
+                OPENVINO_THROW("Evaluation failed on ", node);
             }
         });
     for (const auto& value : outputs) {
         evaluator.evaluate(value);
     }
-    OPENVINO_SUPPRESS_DEPRECATED_END
     for (size_t i = 0; i < m_results.size(); ++i) {
         auto result = m_results.at(i)->output(0);
         output_tensors.at(i) = output_tensor_map[result];
@@ -585,7 +584,7 @@ bool ov::Model::visit_attributes(AttributeVisitor& visitor) {
     return true;
 }
 
-void ov::Model::add_sinks(const ngraph::SinkVector& sinks) {
+void ov::Model::add_sinks(const ov::SinkVector& sinks) {
     m_sinks.insert(m_sinks.end(), sinks.begin(), sinks.end());
     for (const auto& sink : sinks) {
         if (const auto& variable_op = dynamic_pointer_cast<op::util::VariableExtension>(sink)) {
@@ -599,10 +598,10 @@ void ov::Model::add_sinks(const ngraph::SinkVector& sinks) {
     m_shared_rt_info->set_use_topological_cache(false);
 }
 
-void ov::Model::remove_sink(const std::shared_ptr<ngraph::op::Sink>& sink) {
+void ov::Model::remove_sink(const std::shared_ptr<ov::op::Sink>& sink) {
     m_sinks.erase(std::remove_if(m_sinks.begin(),
                                  m_sinks.end(),
-                                 [&sink](std::shared_ptr<ngraph::op::Sink>& s) {
+                                 [&sink](std::shared_ptr<ov::op::Sink>& s) {
                                      return s == sink;
                                  }),
                   m_sinks.end());
@@ -616,24 +615,24 @@ void ov::Model::add_results(const ResultVector& results) {
     m_shared_rt_info->set_use_topological_cache(false);
 }
 
-void ov::Model::remove_result(const std::shared_ptr<ngraph::op::Result>& result) {
+void ov::Model::remove_result(const std::shared_ptr<ov::op::v0::Result>& result) {
     m_results.erase(std::remove_if(m_results.begin(),
                                    m_results.end(),
-                                   [&result](std::shared_ptr<ngraph::op::v0::Result>& r) {
+                                   [&result](std::shared_ptr<ov::op::v0::Result>& r) {
                                        return r == result;
                                    }),
                     m_results.end());
     m_shared_rt_info->set_use_topological_cache(false);
 }
 
-void ov::Model::add_parameters(const ngraph::ParameterVector& params) {
+void ov::Model::add_parameters(const ov::ParameterVector& params) {
     for (size_t i = 0; i < params.size(); i++) {
         for (size_t j = 0; j < m_parameters.size(); j++) {
-            NGRAPH_CHECK(params[i] != m_parameters[j],
-                         "add_parameters(): Tried to add parameter (index in array ",
-                         i,
-                         ") but Model already have the same parameter with index ",
-                         j);
+            OPENVINO_ASSERT(params[i] != m_parameters[j],
+                            "add_parameters(): Tried to add parameter (index in array ",
+                            i,
+                            ") but Model already have the same parameter with index ",
+                            j);
         }
     }
     m_parameters.insert(m_parameters.end(), params.begin(), params.end());
@@ -642,10 +641,10 @@ void ov::Model::add_parameters(const ngraph::ParameterVector& params) {
     m_shared_rt_info->set_use_topological_cache(false);
 }
 
-void ov::Model::remove_parameter(const std::shared_ptr<ngraph::op::Parameter>& param) {
+void ov::Model::remove_parameter(const std::shared_ptr<ov::op::v0::Parameter>& param) {
     m_parameters.erase(std::remove_if(m_parameters.begin(),
                                       m_parameters.end(),
-                                      [&param](std::shared_ptr<ngraph::op::v0::Parameter>& r) {
+                                      [&param](std::shared_ptr<ov::op::v0::Parameter>& r) {
                                           return r == param;
                                       }),
                        m_parameters.end());
@@ -686,9 +685,7 @@ std::vector<ov::Output<const ov::Node>> ov::Model::outputs() const {
     return results;
 }
 ov::Output<const ov::Node> ov::Model::output() const {
-    if (m_results.size() != 1) {
-        throw ov::Exception("output() must be called on a Model with exactly one result.");
-    }
+    OPENVINO_ASSERT(m_results.size() == 1, "output() must be called on a Model with exactly one result.");
     std::shared_ptr<const ov::Node> result = m_results.at(0);
     return result;
 }
@@ -703,7 +700,7 @@ ov::Output<const ov::Node> ov::Model::output(const std::string& tensor_name) con
             return result;
         }
     }
-    throw ov::Exception("Output for tensor name '" + tensor_name + "' is not found.");
+    OPENVINO_THROW("Output for tensor name '", tensor_name, "' is not found.");
 }
 
 std::vector<ov::Output<ov::Node>> ov::Model::outputs() {
@@ -714,9 +711,7 @@ std::vector<ov::Output<ov::Node>> ov::Model::outputs() {
     return results;
 }
 ov::Output<ov::Node> ov::Model::output() {
-    if (m_results.size() != 1) {
-        throw ov::Exception("output() must be called on a Model with exactly one result.");
-    }
+    OPENVINO_ASSERT(m_results.size() == 1, "output() must be called on a Model with exactly one result.");
     return m_results.at(0);
 }
 ov::Output<ov::Node> ov::Model::output(size_t i) {
@@ -727,7 +722,7 @@ ov::Output<ov::Node> ov::Model::output(const std::string& tensor_name) {
         if (res->get_input_tensor(0).get_names().count(tensor_name))
             return res;
     }
-    throw ov::Exception("Output for tensor name '" + tensor_name + "' is not found.");
+    OPENVINO_THROW("Output for tensor name '", tensor_name, "' is not found.");
 }
 
 /// Input Model
@@ -741,9 +736,7 @@ std::vector<ov::Output<const ov::Node>> ov::Model::inputs() const {
 }
 
 ov::Output<const ov::Node> ov::Model::input() const {
-    if (m_parameters.size() != 1) {
-        throw ov::Exception("input() must be called on a Model with exactly one parameter.");
-    }
+    OPENVINO_ASSERT(m_parameters.size() == 1, "input() must be called on a Model with exactly one parameter.");
     std::shared_ptr<const ov::Node> parameter = m_parameters.at(0);
     return parameter;
 }
@@ -758,7 +751,7 @@ ov::Output<const ov::Node> ov::Model::input(const std::string& tensor_name) cons
             return parameter;
         }
     }
-    throw ov::Exception("Input for tensor name '" + tensor_name + "' is not found.");
+    OPENVINO_THROW("Input for tensor name '", tensor_name, "' is not found.");
 }
 
 std::vector<ov::Output<ov::Node>> ov::Model::inputs() {
@@ -770,9 +763,7 @@ std::vector<ov::Output<ov::Node>> ov::Model::inputs() {
 }
 
 ov::Output<ov::Node> ov::Model::input() {
-    if (m_parameters.size() != 1) {
-        throw ov::Exception("input() must be called on a Model with exactly one parameter.");
-    }
+    OPENVINO_ASSERT(m_parameters.size() == 1, "input() must be called on a Model with exactly one parameter.");
     return m_parameters.at(0);
 }
 ov::Output<ov::Node> ov::Model::input(size_t i) {
@@ -783,54 +774,28 @@ ov::Output<ov::Node> ov::Model::input(const std::string& tensor_name) {
         if (param->get_output_tensor(0).get_names().count(tensor_name))
             return param;
     }
-    throw ov::Exception("Input for tensor name '" + tensor_name + "' is not found.");
+    OPENVINO_THROW("Input for tensor name '", tensor_name, "' is not found.");
 }
 
-void ov::Model::reshape(const ov::PartialShape& partial_shape) {
-    if (m_parameters.size() != 1) {
-        throw ov::Exception("reshape(const ov::PartialShape&) must be called on a Model with exactly one parameter.");
-    }
-    std::map<size_t, ov::PartialShape> shapes;
-    shapes[0] = partial_shape;
-    reshape(shapes);
+void ov::Model::reshape(const ov::PartialShape& partial_shape,
+                        const std::unordered_map<std::string, ov::PartialShape>& variable_shapes) {
+    OPENVINO_ASSERT(m_parameters.size() == 1, "must be called on a Model with exactly one parameter.");
+    std::map<size_t, ov::PartialShape> shapes{{0, partial_shape}};
+    reshape(shapes, variable_shapes);
 }
 
-void ov::Model::reshape(const std::map<size_t, ov::PartialShape>& partial_shapes) {
-    std::map<ov::Output<ov::Node>, ov::PartialShape> const_pshape;
-    std::unordered_map<ov::Node*, std::string> port_tensor_map;
-    for (const auto& it : partial_shapes) {
-        const auto port = input(it.first);
-        port_tensor_map[port.get_node()] = std::to_string(it.first);
-        const_pshape[port] = it.second;
-    }
-    reshape(const_pshape);
+void ov::Model::reshape(const std::map<size_t, ov::PartialShape>& partial_shapes,
+                        const std::unordered_map<std::string, ov::PartialShape>& variable_shapes) {
+    reshape(port_shapes_to_node_shapes(this, partial_shapes), variable_shapes);
 }
 
-void ov::Model::reshape(const std::map<std::string, ov::PartialShape>& partial_shapes) {
-    std::map<ov::Output<ov::Node>, ov::PartialShape> const_pshape;
-    std::unordered_map<ov::Node*, std::string> port_tensor_map;
-    for (const auto& it : partial_shapes) {
-        const auto port = input(it.first);
-        if (port_tensor_map.find(port.get_node()) != port_tensor_map.end()) {
-            OPENVINO_ASSERT(it.second == const_pshape.at(port),
-                            "Tensor with names {'",
-                            it.first,
-                            "', '",
-                            port_tensor_map[port.get_node()],
-                            "'} has "
-                            "conflicting shapes ",
-                            it.second,
-                            " and ",
-                            const_pshape.at(port),
-                            ", but they define the same tensor");
-        }
-        port_tensor_map[port.get_node()] = it.first;
-        const_pshape[port] = it.second;
-    }
-    reshape(const_pshape);
+void ov::Model::reshape(const std::map<std::string, ov::PartialShape>& partial_shapes,
+                        const std::unordered_map<std::string, ov::PartialShape>& variable_shapes) {
+    reshape(tensor_names_shapes_to_node_shapes(this, partial_shapes), variable_shapes);
 }
 
-void ov::Model::reshape(const std::map<ov::Output<ov::Node>, ov::PartialShape>& partial_shapes) {
+void ov::Model::reshape(const std::map<ov::Output<ov::Node>, ov::PartialShape>& partial_shapes,
+                        const std::unordered_map<std::string, ov::PartialShape>& variables_shapes) {
     if (partial_shapes.empty())
         return;
 
@@ -865,29 +830,54 @@ void ov::Model::reshape(const std::map<ov::Output<ov::Node>, ov::PartialShape>& 
     if (!need_reshape)
         return;
 
+    std::unordered_map<op::util::Variable*, PartialShape> new_vars_shapes;
+    std::unordered_map<op::util::Variable*, PartialShape> original_vars_shapes;
+    for (const auto& variable : get_variables()) {
+        const auto& var_info = variable->get_info();
+
+        for (const auto& var_id_new_shape : variables_shapes) {
+            const auto& variable_id = var_id_new_shape.first;
+            const auto& new_shape = var_id_new_shape.second;
+            if (variable_id == var_info.variable_id && new_shape != var_info.data_shape) {
+                original_vars_shapes[variable.get()] = var_info.data_shape;
+                new_vars_shapes[variable.get()] = new_shape;
+            }
+        }
+    }
+
     // save original parameters shape
     std::unordered_map<ov::op::v0::Parameter*, ov::PartialShape> original_input_shapes;
     for (const auto& param : params) {
         original_input_shapes[param.get()] = param->get_output_partial_shape(0);
     }
 
-    auto reshape_only = [&](const std::unordered_map<ov::op::v0::Parameter*, ov::PartialShape>& pshapes) {
+    std::unordered_map<op::util::Variable*, PartialShape> original_var_shapes;
+    for (const auto& v : get_variables()) {
+        original_var_shapes[v.get()] = v->get_info().data_shape;
+    }
+
+    auto reshape_only = [this](const std::unordered_map<op::v0::Parameter*, PartialShape>& pshapes,
+                               const std::unordered_map<op::util::Variable*, PartialShape>& vars_shapes) {
         for (const auto& pshape : pshapes) {
             pshape.first->set_partial_shape(pshape.second);
+        }
+
+        for (const auto& shape : vars_shapes) {
+            shape.first->update_data_shape(shape.second);
         }
 
         validate_nodes_and_infer_types();
     };
 
     try {
-        ov::pass::Manager ssr_manager;
-        ssr_manager.register_pass<ngraph::pass::SmartReshape>();
+        ov::pass::Manager ssr_manager("SmartReshape");
+        ssr_manager.register_pass<ov::pass::SmartReshape>();
         ssr_manager.run_passes(shared_from_this());
 
-        reshape_only(new_param_shapes);
+        reshape_only(new_param_shapes, new_vars_shapes);
     } catch (...) {
         // restore shapes to original ones
-        reshape_only(original_input_shapes);
+        reshape_only(original_input_shapes, original_vars_shapes);
         throw;
     }
 }
@@ -948,6 +938,9 @@ ov::Output<ov::Node> ov::Model::add_output(const std::string& op_name, size_t ou
 }
 
 ov::Output<ov::Node> ov::Model::add_output(const ov::Output<ov::Node>& port) {
+    auto cache_valid = [&]() {
+        return m_cached_ops.count(port.get_node());
+    };
     if (ov::op::util::is_output(port.get_node()))
         return port;
     for (const auto& input : port.get_target_inputs()) {
@@ -956,33 +949,42 @@ ov::Output<ov::Node> ov::Model::add_output(const ov::Output<ov::Node>& port) {
             return input.get_node()->output(0);
         }
     }
-    auto result = std::make_shared<ov::op::v0::Result>(port);
-    m_results.push_back(result);
+    m_results.emplace_back(std::make_shared<ov::op::v0::Result>(port, true));
+    auto& result = m_results.back();
     if (m_shared_rt_info->get_use_topological_cache()) {
-        // Full update of topological cache is not needed, 'result' can be just inserted to the end
-        m_cached_ordered_ops.push_back(result);
-        result->insert_info(m_shared_rt_info);  // Just for consistency, not required for Result nodes
+        if (cache_valid()) {
+            // Full update of topological cache is not needed, 'result' can be just inserted to the end
+            m_cached_ordered_ops.push_back(result);
+            m_cached_ops.insert(result.get());
+            result->insert_info(m_shared_rt_info);  // Just for consistency, not required for Result nodes
+        } else {
+            m_shared_rt_info->set_use_topological_cache(false);
+        }
     }
     return result->output(0);
 }
 
 std::shared_ptr<ov::Model> ov::Model::clone() const {
-    return ov::clone_model(*this);
+    std::unordered_map<ov::Node*, std::shared_ptr<ov::Node>> node_map;
+    return ov::clone_ov_model(*this, node_map);
 }
 
 bool ov::Model::has_rt_info(const std::vector<std::string>& args) const {
-    ov::AnyMap info = m_rt_info;
-    for (size_t i = 0; i < args.size(); i++) {
-        bool has_attr = has_rt_arg(info, args[i]);
-        if (!has_attr)
-            return false;
-        if (i == args.size() - 1)
-            break;
-        const ov::Any& rt_attr = get_rt_arg<std::string>(info, args[i]);
-        info = get_map_from_attr(rt_attr);
-    }
-    return true;
+    return has_rt_info(m_rt_info, args.cbegin(), args.cend());
 }
+
+bool ov::Model::has_rt_info(const ov::AnyMap& info,
+                            const std::vector<std::string>::const_iterator& begin,
+                            const std::vector<std::string>::const_iterator& end) const {
+    if (!has_rt_arg(info, *begin))
+        return false;
+    if (begin == end - 1) {
+        return true;
+    } else {
+        return has_rt_info(get_map_from_attr(get_rt_arg<std::string>(info, *begin)), begin + 1, end);
+    }
+}
+
 ov::Any& ov::Model::get_rt_info(ov::AnyMap& info,
                                 const std::vector<std::string>::const_iterator& begin,
                                 const std::vector<std::string>::const_iterator& end) {
@@ -1016,7 +1018,7 @@ const ov::AnyMap& ov::Model::get_map_from_attr(const ov::Any& info) const {
         std::shared_ptr<ov::Meta> meta = info.as<std::shared_ptr<ov::Meta>>();
         return *info.as<std::shared_ptr<ov::Meta>>();
     }
-    throw ov::Exception("Cannot get runtime attribute. Path to runtime attribute is incorrect.");
+    OPENVINO_THROW("Cannot get runtime attribute. Path to runtime attribute is incorrect.");
 }
 
 ov::AnyMap& ov::Model::get_map_from_attr(ov::Any& info) const {
@@ -1032,7 +1034,7 @@ ov::AnyMap& ov::Model::get_map_from_attr(ov::Any& info) const {
         std::shared_ptr<ov::Meta> meta = info.as<std::shared_ptr<ov::Meta>>();
         return *info.as<std::shared_ptr<ov::Meta>>();
     }
-    throw ov::Exception("Cannot get runtime attribute. Path to runtime attribute is incorrect.");
+    OPENVINO_THROW("Cannot get runtime attribute. Path to runtime attribute is incorrect.");
 }
 
 const ov::Any& ov::Model::get_attr(const ov::Any& info) const {
@@ -1156,7 +1158,7 @@ void ov::set_batch(const std::shared_ptr<ov::Model>& f, ov::Dimension batch_size
         auto batch_idx = bs_util::get_batch(layout, pshape);
         auto new_shape = param->get_partial_shape();
         new_shape[batch_idx] = batch_size;
-        new_shapes_map[f->input(i)] = new_shape;
+        new_shapes_map[f->input(i)] = std::move(new_shape);
     }
     try {
         f->reshape(new_shapes_map);

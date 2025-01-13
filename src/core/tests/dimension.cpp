@@ -1,13 +1,14 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "ngraph/dimension.hpp"
-
+#include "common_test_utils/type_prop.hpp"
 #include "gtest/gtest.h"
+#include "openvino/core/partial_shape.hpp"
+#include "openvino/core/symbol.hpp"
 
 using namespace std;
-using namespace ngraph;
+using namespace ov;
 
 TEST(dimension, broadcast_merge_static_1_and_10) {
     Dimension result;
@@ -119,4 +120,50 @@ TEST(dimension, division_of_static_dims) {
     Dimension::value_type four(4);
     Dimension empty(2, 1);
     EXPECT_EQ(seven / four, empty);
+}
+
+TEST(dimension, dimension_equality) {
+    // labeling dimensions
+    PartialShape dimensions = PartialShape::dynamic(5);  // A, B, C, D, E
+    auto symbols = set_shape_symbols(dimensions);
+
+    // checking symbols are unique
+    for (const auto& dimension : dimensions)
+        EXPECT_NE(dimension.get_symbol(), nullptr);
+
+    for (const auto& lhs : dimensions) {
+        for (const auto& rhs : dimensions) {
+            if (&lhs == &rhs)
+                continue;
+            EXPECT_NE(lhs.get_symbol(), rhs.get_symbol());
+            EXPECT_FALSE(ov::symbol::are_equal(lhs.get_symbol(), rhs.get_symbol()));
+        }
+    }
+
+    ov::symbol::set_equal(dimensions[0].get_symbol(), dimensions[1].get_symbol());  // A == B
+    ov::symbol::set_equal(dimensions[3].get_symbol(), dimensions[4].get_symbol());  // D == E
+    ov::symbol::set_equal(dimensions[2].get_symbol(), dimensions[3].get_symbol());  // C == D
+    ov::symbol::set_equal(dimensions[1].get_symbol(), dimensions[2].get_symbol());  // B == C
+
+    // expected to see A == B == C == D == E
+    for (const auto& lhs : dimensions)
+        for (const auto& rhs : dimensions)
+            EXPECT_TRUE(ov::symbol::are_equal(lhs.get_symbol(), rhs.get_symbol()));
+
+    // clear up all the tracking info
+    for (auto& dimension : dimensions)
+        dimension.set_symbol(nullptr);
+
+    // checking labels are nullified
+    for (const auto& dimension : dimensions)
+        EXPECT_EQ(dimension.get_symbol(), nullptr);
+}
+
+TEST(dimension, dimension_symbolic_equality) {
+    auto A = std::make_shared<ov::Symbol>(), B = std::make_shared<ov::Symbol>();
+    auto C = std::make_shared<ov::Symbol>(), D = std::make_shared<ov::Symbol>();
+    ov::symbol::set_equal(A, B);
+    ov::symbol::set_equal(D, C);
+    ov::symbol::set_equal(A, D);
+    EXPECT_TRUE(ov::symbol::are_equal(B, C));
 }

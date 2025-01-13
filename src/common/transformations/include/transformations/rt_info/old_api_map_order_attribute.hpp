@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -13,18 +13,19 @@
 
 #include <functional>
 #include <memory>
-#include <openvino/core/node.hpp>
-#include <openvino/core/rtti.hpp>
 #include <set>
 #include <string>
-#include <transformations_visibility.hpp>
 #include <utility>
+
+#include "openvino/core/node.hpp"
+#include "openvino/core/rtti.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 
 class OldApiMapOrder;
 /**
- * @ingroup ie_runtime_attr_api
+ * @ingroup ov_runtime_attr_api
  * @brief OldApiMapOrder class represents runtime info attribute that stores
  * order of the transpose that is required for obtaining IR in old API.
  *
@@ -39,7 +40,7 @@ class OldApiMapOrder;
  */
 class TRANSFORMATIONS_API OldApiMapOrder : public RuntimeAttribute {
 public:
-    OPENVINO_RTTI("old_api_map_order", "0");
+    OPENVINO_RTTI("old_api_map_order", "0", RuntimeAttribute);
 
     /**
      * A default constructor

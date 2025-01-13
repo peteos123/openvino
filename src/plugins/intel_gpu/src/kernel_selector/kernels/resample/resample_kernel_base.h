@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -24,20 +24,14 @@ struct resample_params : public base_params {
     uint32_t antialias = 0;
     float cube_coeff = -0.75f;
     using AxesAndScales = std::map<InterpolateAxis, float>;
-    AxesAndScales axesAndScales;
+    std::vector<InterpolateAxis> axes;
+    std::vector<float> scales;
 
     ParamsKey GetParamsKey() const override {
         auto k = base_params::GetParamsKey();
         k.EnableReampleType(resampleType);
         return k;
     }
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// resample_optional_params
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-struct resample_optional_params : optional_params {
-    resample_optional_params() : optional_params(KernelType::RESAMPLE) {}
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -51,10 +45,10 @@ public:
     virtual ~ResampleKernelBase() {}
 
 protected:
-    bool Validate(const Params& p, const optional_params& o) const override;
+    bool Validate(const Params& p) const override;
     virtual DispatchData SetDefault(const resample_params& arg) const;
     virtual JitConstants GetJitConstants(const resample_params& params) const;
-    KernelsData GetCommonKernelsData(const Params& params, const optional_params& options) const;
+    KernelsData GetCommonKernelsData(const Params& params) const;
     size_t GetFeatureBlockSize(const resample_params& params) const;
     virtual Datatype GetAccumulatorType(const resample_params& params) const;
 };

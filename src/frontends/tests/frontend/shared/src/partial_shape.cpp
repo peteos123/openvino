@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -6,7 +6,6 @@
 
 #include "utils.hpp"
 
-using namespace ngraph;
 using namespace ov::frontend;
 
 std::string FrontEndPartialShapeTest::getTestCaseName(const testing::TestParamInfo<PartialShapeParam>& obj) {
@@ -21,7 +20,6 @@ std::string FrontEndPartialShapeTest::getTestCaseName(const testing::TestParamIn
 }
 
 void FrontEndPartialShapeTest::SetUp() {
-    FrontEndTestUtils::setupTestEnv();
     m_fem = FrontEndManager();  // re-initialize after setting up environment
     initParamTest();
 }
@@ -39,12 +37,12 @@ void FrontEndPartialShapeTest::doLoadFromFile() {
 ///////////////////////////////////////////////////////////////////
 
 TEST_P(FrontEndPartialShapeTest, testCheckOldPartialShape) {
-    ASSERT_NO_THROW(doLoadFromFile());
+    OV_ASSERT_NO_THROW(doLoadFromFile());
 
-    std::shared_ptr<ngraph::Function> function;
-    ASSERT_NO_THROW(function = m_frontEnd->convert(m_inputModel));
-    auto ops = function->get_ordered_ops();
-    auto it = std::find_if(ops.begin(), ops.end(), [&](const std::shared_ptr<ngraph::Node>& node) {
+    std::shared_ptr<ov::Model> model;
+    OV_ASSERT_NO_THROW(model = m_frontEnd->convert(m_inputModel));
+    auto ops = model->get_ordered_ops();
+    auto it = std::find_if(ops.begin(), ops.end(), [&](const std::shared_ptr<ov::Node>& node) {
         return node->get_friendly_name().find(m_partShape.m_tensorName) != std::string::npos;
     });
     ASSERT_NE(it, ops.end());
@@ -53,16 +51,16 @@ TEST_P(FrontEndPartialShapeTest, testCheckOldPartialShape) {
 }
 
 TEST_P(FrontEndPartialShapeTest, testSetNewPartialShape) {
-    ASSERT_NO_THROW(doLoadFromFile());
+    OV_ASSERT_NO_THROW(doLoadFromFile());
     Place::Ptr place;
-    ASSERT_NO_THROW(place = m_inputModel->get_place_by_tensor_name(m_partShape.m_tensorName));
+    OV_ASSERT_NO_THROW(place = m_inputModel->get_place_by_tensor_name(m_partShape.m_tensorName));
     ASSERT_NE(place, nullptr);
-    ASSERT_NO_THROW(m_inputModel->set_partial_shape(place, PartialShape{m_partShape.m_newPartialShape}));
+    OV_ASSERT_NO_THROW(m_inputModel->set_partial_shape(place, ov::PartialShape{m_partShape.m_newPartialShape}));
 
-    std::shared_ptr<ngraph::Function> function;
-    ASSERT_NO_THROW(function = m_frontEnd->convert(m_inputModel));
-    auto ops = function->get_ordered_ops();
-    auto it = std::find_if(ops.begin(), ops.end(), [&](const std::shared_ptr<ngraph::Node>& node) {
+    std::shared_ptr<ov::Model> model;
+    OV_ASSERT_NO_THROW(model = m_frontEnd->convert(m_inputModel));
+    auto ops = model->get_ordered_ops();
+    auto it = std::find_if(ops.begin(), ops.end(), [&](const std::shared_ptr<ov::Node>& node) {
         return node->get_friendly_name().find(m_partShape.m_tensorName) != std::string::npos;
     });
     ASSERT_NE(it, ops.end());

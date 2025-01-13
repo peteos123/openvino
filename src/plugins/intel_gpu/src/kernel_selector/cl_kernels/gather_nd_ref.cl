@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -33,15 +33,16 @@
 
 #define INDICES_MAX_DIM 6
 
-KERNEL(gather_nd_ref)(const __global INPUT0_TYPE* data,
-                   const __global INPUT1_TYPE* indices,
-                   __global OUTPUT_TYPE* output
+KERNEL(gather_nd_ref)(
+    OPTIONAL_SHAPE_INFO_ARG
+    const __global INPUT0_TYPE* data,
+    const __global INPUT1_TYPE* indices,
+    __global OUTPUT_TYPE* output
 #if HAS_FUSED_OPS_DECLS
-                   , FUSED_OPS_DECLS
+    , FUSED_OPS_DECLS
 #endif
 )
 {
-
     const uint dim0 = get_global_id(0);
     const uint dim1 = get_global_id(1);
     const uint dim2 = get_global_id(2);
@@ -82,19 +83,36 @@ KERNEL(gather_nd_ref)(const __global INPUT0_TYPE* data,
         const uint idx_dim[INPUT1_DIMS] = {INPUT1_BATCH_NUM, INPUT1_FEATURE_NUM, INPUT1_SIZE_W, INPUT1_SIZE_Z, INPUT1_SIZE_Y, INPUT1_SIZE_X};
     #endif
 
+#if IS_DYNAMIC
+    uint wi_slice = 1;
+    #if INPUT0_DIMS == 4
+        uint input_dims[4] = {INPUT0_BATCH_NUM, INPUT0_FEATURE_NUM, INPUT0_SIZE_Y, INPUT0_SIZE_X};
+    #elif INPUT0_DIMS == 5
+        uint input_dims[5] = {INPUT0_BATCH_NUM, INPUT0_FEATURE_NUM, INPUT0_SIZE_Z, INPUT0_SIZE_Y, INPUT0_SIZE_X};
+    #else
+        uint input_dims[6] = {INPUT0_BATCH_NUM, INPUT0_FEATURE_NUM, INPUT0_SIZE_W, INPUT0_SIZE_Z, INPUT0_SIZE_Y, INPUT0_SIZE_X};
+    #endif
+    const uint indices_last_dim = idx_dim[INDICES_RANK - 1];
+    for (uint i = BATCH_DIMS + indices_last_dim; i < INPUT0_DIMS; i++)
+        wi_slice *= input_dims[i];
+#else
+    const uint wi_slice = WI_SLICE_SIZE;
+    const uint indices_last_dim = INDICES_LAST_DIM;
+#endif
+
     const int idx = GET_UPDATES_INDEX(INPUT1, IDX_ORDER);
 
     // Calculate data index
     uint indices_val[INDICES_MAX_DIM + BATCH_DIMS];
-    for (int i = 0; i < INDICES_MAX_DIM + BATCH_DIMS; i++) {
+    for (uint i = 0; i < INDICES_MAX_DIM + BATCH_DIMS; i++) {
         indices_val[i] = 0;
     }
 
-    for (int i = 0; i < BATCH_DIMS; i++) {
+    for (uint i = 0; i < BATCH_DIMS; i++) {
         indices_val[i] = idx_arr[i];
     }
 
-    for (int i = 0; i < INDICES_LAST_DIM; i++) {
+    for (uint i = 0; i < indices_last_dim; i++) {
         indices_val[i + BATCH_DIMS] = indices[idx+i];
     }
 
@@ -117,55 +135,46 @@ KERNEL(gather_nd_ref)(const __global INPUT0_TYPE* data,
     const uint data_idx = GET_UPDATES_INDEX(INPUT0, IN_ORDER);
 
     // Calculate output index
-    #if BATCH_DIMS <= 1
-        const uint out_x = idx_x;
-        const uint out_y = idx_y;
-        const uint out_z = idx_z;
-        const uint out_w = idx_w;
-        const uint out_f = idx_f;
-        const uint out_b = idx_b;
-    #else
-        #if BATCH_MERGED_OUTPUT
-            uint pitch_acc = 1;
-            uint output_batch_size = 0;
-            for (int i = BATCH_DIMS - 1; i >= 0; i--) {
-                output_batch_size += (idx_arr[i] * pitch_acc);
-                pitch_acc *= idx_dim[i];
-            }
+    #if BATCH_MERGED_OUTPUT && BATCH_DIMS > 1
+        uint pitch_acc = 1;
+        uint output_batch_size = 0;
+        for (int i = BATCH_DIMS - 1; i >= 0; i--) {
+            output_batch_size += (idx_arr[i] * pitch_acc);
+            pitch_acc *= idx_dim[i];
+        }
 
-            #if OUTPUT_DIMS == 4
-                const uint out_x = idx_arr[BATCH_DIMS+2];
-                const uint out_y = idx_arr[BATCH_DIMS+1];
-            #elif OUTPUT_DIMS == 5
-                const uint out_x = idx_arr[BATCH_DIMS+3];
-                const uint out_y = idx_arr[BATCH_DIMS+2];
-                const uint out_z = idx_arr[BATCH_DIMS+1];
-            #else
-                const uint out_x = idx_arr[BATCH_DIMS+4];
-                const uint out_y = idx_arr[BATCH_DIMS+3];
-                const uint out_z = idx_arr[BATCH_DIMS+2];
-                const uint out_w = idx_arr[BATCH_DIMS+1];
-            #endif
-            const uint out_f = idx_arr[BATCH_DIMS+0];
-            const uint out_b = output_batch_size;
+        #if OUTPUT_DIMS == 4
+            const uint out_x = idx_arr[BATCH_DIMS+2];
+            const uint out_y = idx_arr[BATCH_DIMS+1];
+        #elif OUTPUT_DIMS == 5
+            const uint out_x = idx_arr[BATCH_DIMS+3];
+            const uint out_y = idx_arr[BATCH_DIMS+2];
+            const uint out_z = idx_arr[BATCH_DIMS+1];
         #else
-            #if OUTPUT_DIMS == 4
-                const uint out_x = idx_arr[3];
-                const uint out_y = idx_arr[2];
-            #elif OUTPUT_DIMS == 5
-                const uint out_x = idx_arr[4];
-                const uint out_y = idx_arr[3];
-                const uint out_z = idx_arr[2];
-            #else
-                const uint out_x = idx_arr[5];
-                const uint out_y = idx_arr[4];
-                const uint out_z = idx_arr[3];
-                const uint out_w = idx_arr[2];
-            #endif
-            const uint out_f = idx_arr[1];
-            const uint out_b = idx_arr[0];
-
+            const uint out_x = idx_arr[BATCH_DIMS+4];
+            const uint out_y = idx_arr[BATCH_DIMS+3];
+            const uint out_z = idx_arr[BATCH_DIMS+2];
+            const uint out_w = idx_arr[BATCH_DIMS+1];
         #endif
+        const uint out_f = idx_arr[BATCH_DIMS+0];
+        const uint out_b = output_batch_size;
+    #else
+        #if OUTPUT_DIMS == 4
+            const uint out_x = idx_arr[3];
+            const uint out_y = idx_arr[2];
+        #elif OUTPUT_DIMS == 5
+            const uint out_x = idx_arr[4];
+            const uint out_y = idx_arr[3];
+            const uint out_z = idx_arr[2];
+        #else
+            const uint out_x = idx_arr[5];
+            const uint out_y = idx_arr[4];
+            const uint out_z = idx_arr[3];
+            const uint out_w = idx_arr[2];
+        #endif
+        const uint out_f = idx_arr[1];
+        const uint out_b = idx_arr[0];
+
     #endif
 
     const uint output_idx = GET_OUTPUT_INDEX(OUT_ORDER);
@@ -188,7 +197,7 @@ KERNEL(gather_nd_ref)(const __global INPUT0_TYPE* data,
         const uint b_pitch = f_pitch * OUTPUT_FEATURE_NUM;
     #endif
 
-    for (int i = 0; i < WI_SLICE_SIZE; i++) {
+    for (uint i = 0; i < wi_slice; i++) {
         uint dst_idx = output_idx + i;
         INPUT0_TYPE val = data[data_idx + i];
 

@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -6,7 +6,7 @@
 #include "primitive_inst.h"
 #include "register.hpp"
 #include "cpu_impl_helpers.hpp"
-#include "impls/implementation_map.hpp"
+#include "impls/registry/implementation_map.hpp"
 
 #include <vector>
 #include <queue>
@@ -149,11 +149,11 @@ vector2D<bounding_box> load_boxes(stream& stream, memory::ptr mem, bool center_p
     auto data_type = mem->get_layout().data_type;
     switch (data_type) {
     case cldnn::data_types::f16:
-        return load_boxes_impl<data_type_to_type<data_types::f16>::type>(stream, mem, center_point);
+        return load_boxes_impl<ov::element_type_traits<data_types::f16>::value_type>(stream, mem, center_point);
     case cldnn::data_types::f32:
-        return load_boxes_impl<data_type_to_type<data_types::f32>::type>(stream, mem, center_point);
+        return load_boxes_impl<ov::element_type_traits<data_types::f32>::value_type>(stream, mem, center_point);
     default:
-        throw std::runtime_error("Non max supression - unsupported boxes data type");
+        throw std::runtime_error("Non max suppression - unsupported boxes data type");
     }
 }
 
@@ -186,11 +186,11 @@ vector3D<float> load_scores(stream& stream, memory::ptr mem) {
     auto data_type = mem->get_layout().data_type;
     switch (data_type) {
     case cldnn::data_types::f16:
-        return load_scores_impl<data_type_to_type<data_types::f16>::type>(stream, mem);
+        return load_scores_impl<ov::element_type_traits<data_types::f16>::value_type>(stream, mem);
     case cldnn::data_types::f32:
-        return load_scores_impl<data_type_to_type<data_types::f32>::type>(stream, mem);
+        return load_scores_impl<ov::element_type_traits<data_types::f32>::value_type>(stream, mem);
     default:
-        throw std::runtime_error("Non max supression - unsupported scores data type");
+        throw std::runtime_error("Non max suppression - unsupported scores data type");
     }
 }
 
@@ -207,22 +207,20 @@ T load_scalar(stream& stream, memory::ptr mem) {
     auto data_type = mem->get_layout().data_type;
     switch (data_type) {
     case cldnn::data_types::i32:
-        return load_scalar_impl<T, data_type_to_type<data_types::i32>::type>(stream, mem);
+        return load_scalar_impl<T, ov::element_type_traits<data_types::i32>::value_type>(stream, mem);
     case cldnn::data_types::f16:
-        return load_scalar_impl<T, data_type_to_type<data_types::f16>::type>(stream, mem);
+        return load_scalar_impl<T, ov::element_type_traits<data_types::f16>::value_type>(stream, mem);
     case cldnn::data_types::f32:
-        return load_scalar_impl<T, data_type_to_type<data_types::f32>::type>(stream, mem);
+        return load_scalar_impl<T, ov::element_type_traits<data_types::f32>::value_type>(stream, mem);
     default:
-        throw std::runtime_error("Non max supression - unsupported data type");
+        throw std::runtime_error("Non max suppression - unsupported data type");
     }
 }
 
 template <typename T>
-void store_result_impl(stream& stream, memory::ptr mem, const std::vector<result_indices>& result) {
+void store_result_impl(stream& stream, memory::ptr mem, const std::vector<result_indices>& result, size_t output_size) {
     mem_lock<T, mem_lock_type::write> lock(mem, stream);
     auto ptr = lock.data();
-
-    auto output_size = static_cast<size_t>(mem->get_layout().batch());
     auto results_size = result.size();
 
     size_t si = 0;
@@ -240,43 +238,41 @@ void store_result_impl(stream& stream, memory::ptr mem, const std::vector<result
     }
 }
 
-void store_result(stream& stream, memory::ptr mem, const std::vector<result_indices>& result) {
+void store_result(stream& stream, memory::ptr mem, const std::vector<result_indices>& result, size_t output_size) {
     auto data_type = mem->get_layout().data_type;
     switch (data_type) {
     case cldnn::data_types::i32:
-        store_result_impl<data_type_to_type<data_types::i32>::type>(stream, mem, result);
+        store_result_impl<ov::element_type_traits<data_types::i32>::value_type>(stream, mem, result, output_size);
         break;
     case cldnn::data_types::f16:
-        store_result_impl<data_type_to_type<data_types::f16>::type>(stream, mem, result);
+        store_result_impl<ov::element_type_traits<data_types::f16>::value_type>(stream, mem, result, output_size);
         break;
     case cldnn::data_types::f32:
-        store_result_impl<data_type_to_type<data_types::f32>::type>(stream, mem, result);
+        store_result_impl<ov::element_type_traits<data_types::f32>::value_type>(stream, mem, result, output_size);
         break;
     default:
-        throw std::runtime_error("Non max supression - unsupported output data type");
+        throw std::runtime_error("Non max suppression - unsupported output data type");
     }
 }
 
-void store_first_output(stream& stream, memory::ptr mem, const std::vector<result_indices>& result) {
+void store_first_output(stream& stream, memory::ptr mem, const std::vector<result_indices>& result, size_t output_size) {
     auto data_type = mem->get_layout().data_type;
     switch (data_type) {
     case cldnn::data_types::i32:
-        store_result_impl<data_type_to_type<data_types::i32>::type>(stream, mem, result);
+        store_result_impl<ov::element_type_traits<data_types::i32>::value_type>(stream, mem, result, output_size);
         break;
     case cldnn::data_types::i64:
-        store_result_impl<data_type_to_type<data_types::i32>::type>(stream, mem, result);
+        store_result_impl<ov::element_type_traits<data_types::i32>::value_type>(stream, mem, result, output_size);
         break;
     default:
-        throw std::runtime_error("Non max supression - unsupported output data type");
+        throw std::runtime_error("Non max suppression - unsupported output data type");
     }
 }
 
 template <typename T>
-void store_second_output_impl(stream& stream, memory::ptr mem, const std::vector<result_indices>& result) {
+void store_second_output_impl(stream& stream, memory::ptr mem, const std::vector<result_indices>& result, size_t output_size) {
     mem_lock<T, mem_lock_type::write> lock(mem, stream);
     auto ptr = lock.data();
-
-    auto output_size = static_cast<size_t>(mem->get_layout().batch());
     auto results_size = result.size();
 
     size_t si = 0;
@@ -294,22 +290,22 @@ void store_second_output_impl(stream& stream, memory::ptr mem, const std::vector
     }
 }
 
-void store_second_output(stream& stream, memory::ptr mem, const std::vector<result_indices>& result) {
+void store_second_output(stream& stream, memory::ptr mem, const std::vector<result_indices>& result, size_t output_size) {
     auto data_type = mem->get_layout().data_type;
     switch (data_type) {
     case cldnn::data_types::f16:
-        store_second_output_impl<data_type_to_type<data_types::f16>::type>(stream, mem, result);
+        store_second_output_impl<ov::element_type_traits<data_types::f16>::value_type>(stream, mem, result, output_size);
         break;
     case cldnn::data_types::f32:
-        store_second_output_impl<data_type_to_type<data_types::f32>::type>(stream, mem, result);
+        store_second_output_impl<ov::element_type_traits<data_types::f32>::value_type>(stream, mem, result, output_size);
         break;
     default:
-        throw std::runtime_error("Non max supression - unsupported second output data type");
+        throw std::runtime_error("Non max suppression - unsupported second output data type");
     }
 }
 
 template <typename T>
-void store_third_output_impl(stream& stream, memory::ptr mem, const std::vector<result_indices>& result) {
+void store_third_output_impl(stream& stream, const memory::ptr& mem, const std::vector<result_indices>& result) {
     mem_lock<T, mem_lock_type::write> lock(mem, stream);
     auto ptr = lock.data();
     ptr[0] = static_cast<T>(result.size());
@@ -319,18 +315,18 @@ void store_third_output(stream& stream, memory::ptr mem, const std::vector<resul
     auto data_type = mem->get_layout().data_type;
     switch (data_type) {
     case cldnn::data_types::i32:
-        store_third_output_impl<data_type_to_type<data_types::i32>::type>(stream, mem, result);
+        store_third_output_impl<ov::element_type_traits<data_types::i32>::value_type>(stream, mem, result);
         break;
     case cldnn::data_types::i64:
-        store_third_output_impl<data_type_to_type<data_types::i32>::type>(stream, mem, result);
+        store_third_output_impl<ov::element_type_traits<data_types::i32>::value_type>(stream, mem, result);
         break;
     default:
-        throw std::runtime_error("Non max supression - unsupported third output data type");
+        throw std::runtime_error("Non max suppression - unsupported third output data type");
     }
 }
 
 void run(non_max_suppression_inst& instance) {
-    auto prim = instance.node->get_primitive();
+    auto prim = instance.get_typed_desc<non_max_suppression>();
     auto& stream = instance.get_network().get_stream();
 
     auto boxes = load_boxes(stream, instance.input_boxes_mem(), prim->center_point_box);
@@ -365,14 +361,16 @@ void run(non_max_suppression_inst& instance) {
                           soft_nms_sigma,
                           prim->sort_result_descending);
 
+    size_t output_size = instance.get_impl_params()->output_layouts[0].batch();
+
     // Legacy APIs using mutable inputs for multiple outputs
     if (instance.has_third_output()) {
         store_third_output(stream, instance.third_output_mem(), result);
     }
 
     if (instance.has_second_output()) {
-        store_second_output(stream, instance.second_output_mem(), result);
-        store_first_output(stream, instance.output_memory_ptr(), result);
+        store_second_output(stream, instance.second_output_mem(), result, output_size);
+        store_first_output(stream, instance.output_memory_ptr(), result, output_size);
         return;
     }
 
@@ -381,12 +379,12 @@ void run(non_max_suppression_inst& instance) {
         store_third_output(stream, instance.output_memory_ptr(2), result);
 
     if (instance.outputs_memory_count() >= 2) {
-        store_second_output(stream, instance.output_memory_ptr(1), result);
-        store_first_output(stream, instance.output_memory_ptr(), result);
+        store_second_output(stream, instance.output_memory_ptr(1), result, output_size);
+        store_first_output(stream, instance.output_memory_ptr(), result, output_size);
         return;
     }
 
-    store_result(stream, instance.output_memory_ptr(), result);
+    store_result(stream, instance.output_memory_ptr(), result, output_size);
 }
 
 }  // namespace
@@ -394,32 +392,37 @@ void run(non_max_suppression_inst& instance) {
 struct non_max_suppression_impl : typed_primitive_impl<non_max_suppression> {
     using parent = typed_primitive_impl<non_max_suppression>;
 
-    DECLARE_OBJECT_TYPE_SERIALIZATION
+    DECLARE_OBJECT_TYPE_SERIALIZATION(cldnn::cpu::non_max_suppression_impl)
 
     std::unique_ptr<primitive_impl> clone() const override {
         return make_unique<non_max_suppression_impl>(*this);
     }
 
-    non_max_suppression_impl() : parent(kernel_selector::weights_reorder_params(), "non_max_suppression_impl") {}
+    non_max_suppression_impl() : parent("non_max_suppression_impl") {}
 
-    event::ptr execute_impl(const std::vector<event::ptr>& event, typed_primitive_inst<non_max_suppression>& instance) override {
-        for (auto e : event) {
-            e->wait();
-        }
-
+    event::ptr execute_impl(const std::vector<event::ptr>& events, typed_primitive_inst<non_max_suppression>& instance) override {
         auto& stream = instance.get_network().get_stream();
-        auto ev = stream.create_user_event(false);
+
+        const bool pass_through_events = (stream.get_queue_type() == QueueTypes::out_of_order) && instance.all_dependencies_cpu_impl();
+
+        if (!pass_through_events) {
+            stream.wait_for_events(events);
+        }
 
         run(instance);
 
-        ev->set();
-        return ev;
+
+        if (pass_through_events) {
+            return stream.group_events(events);
+        }
+
+        return make_output_event(stream, instance.is_output());
     }
 
     static std::unique_ptr<primitive_impl> create(const non_max_suppression_node&, const kernel_impl_params&) {
         return make_unique<non_max_suppression_impl>();
     }
-    void init_kernels(const kernels_cache&) override {}
+    void init_kernels(const kernels_cache&, const kernel_impl_params&) override {}
 };
 namespace detail {
 
@@ -432,7 +435,54 @@ attach_non_max_suppression_impl::attach_non_max_suppression_impl() {
 }
 
 }  // namespace detail
+
+struct non_max_suppression_gather_impl : typed_primitive_impl<non_max_suppression_gather> {
+    using parent = typed_primitive_impl<non_max_suppression_gather>;
+
+    DECLARE_OBJECT_TYPE_SERIALIZATION(cldnn::cpu::non_max_suppression_gather_impl)
+
+    std::unique_ptr<primitive_impl> clone() const override {
+        return make_unique<non_max_suppression_gather_impl>(*this);
+    }
+
+    non_max_suppression_gather_impl() : parent("non_max_suppression_gather_impl") {}
+
+    event::ptr execute_impl(const std::vector<event::ptr>& events, typed_primitive_inst<non_max_suppression_gather>& instance) override {
+        auto& stream = instance.get_network().get_stream();
+
+        const bool pass_through_events = (stream.get_queue_type() == QueueTypes::out_of_order) && instance.all_dependencies_cpu_impl();
+
+        if (!pass_through_events) {
+            stream.wait_for_events(events);
+        }
+
+        if (pass_through_events) {
+            return stream.group_events(events);
+        }
+
+        return make_output_event(stream, instance.is_output());
+    }
+
+    static std::unique_ptr<primitive_impl> create(const non_max_suppression_gather_node&, const kernel_impl_params&) {
+        return make_unique<non_max_suppression_gather_impl>();
+    }
+    void init_kernels(const kernels_cache&, const kernel_impl_params&) override {}
+};
+
+namespace detail {
+
+attach_non_max_suppression_gather_impl::attach_non_max_suppression_gather_impl() {
+    implementation_map<non_max_suppression_gather>::add(impl_types::cpu, non_max_suppression_gather_impl::create, {
+        std::make_tuple(data_types::i32, format::bfyx),
+        std::make_tuple(data_types::f16, format::bfyx),
+        std::make_tuple(data_types::f32, format::bfyx),
+    });
+}
+
+}  // namespace detail
+
 }  // namespace cpu
 }  // namespace cldnn
 
 BIND_BINARY_BUFFER_WITH_TYPE(cldnn::cpu::non_max_suppression_impl)
+BIND_BINARY_BUFFER_WITH_TYPE(cldnn::non_max_suppression)

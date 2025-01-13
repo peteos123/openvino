@@ -4,8 +4,9 @@
 
 #include "low_precision/rt_info/quantization_mode_attribute.hpp"
 #include <assert.h>
+#include <sstream>
 
-using namespace ngraph;
+using namespace ov;
 using namespace ov;
 
 std::string QuantizationModeAttribute::to_string() const {

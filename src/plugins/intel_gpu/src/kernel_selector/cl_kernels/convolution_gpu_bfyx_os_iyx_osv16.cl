@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -56,6 +56,7 @@ if (_kernel_data.leftovers)
 REQD_SUB_GROUP_SIZE(SUB_GROUP_SIZE)
 __attribute__((reqd_work_group_size(1, 1, SUB_GROUP_SIZE)))
 KERNEL(convolution_gpu_bfyx_os_iyx_osv16)(
+    OPTIONAL_SHAPE_INFO_ARG
     const __global UNIT_TYPE* input,
     __global UNIT_TYPE* output,
     const __global UNIT_TYPE* weights
@@ -71,6 +72,8 @@ KERNEL(convolution_gpu_bfyx_os_iyx_osv16)(
     const uint or  = (uint)get_global_id(1) * OUTPUT_BLOCK_HEIGHT; // or = Output Row
     const uint fm  = get_global_id(2);                             // fm = Feature Map = od = Output Depth
     const uint lid = get_sub_group_local_id();
+    const uint filter_physical_len = FILTER_GROUPS_NUM * FILTER_SIZE_X * FILTER_SIZE_Y * FILTER_SIZE_Z * FILTER_IFM_NUM * ALIGN(FILTER_OFM_NUM, OSV_SIZE);
+    const uint input0_physical_len = INPUT0_OFFSET_WITH_PADDING + INPUT0_BATCH_PITCH * INPUT0_BATCH_NUM; // bfyx format
 
 #if GROUPED
     uint batch_idx = fm / (FEATURES_THREADS_PER_BATCH * FILTER_GROUPS_NUM);
@@ -112,8 +115,10 @@ KERNEL(convolution_gpu_bfyx_os_iyx_osv16)(
         for(uint in_block_pos = 0; in_block_pos < IN_BLOCK_ARRAY_SIZE * SUB_GROUP_SIZE; in_block_pos += SUB_GROUP_SIZE) {
             // Horizontal position in input block after read.
             const uint in_block_next_x_pos = in_block_pos % IN_BLOCK_WIDTH + SUB_GROUP_SIZE;
-
-            in[in_block_pos / SUB_GROUP_SIZE] = input[tmp_in_addr + (in_block_pos % IN_BLOCK_WIDTH) * INPUT0_X_PITCH];
+            uint idx = tmp_in_addr + (in_block_pos % IN_BLOCK_WIDTH) * INPUT0_X_PITCH;
+            // index clipping to avoid out-of-bound memory access. Such data is not supposed to be used in actual computation.
+            idx = min(idx, input0_physical_len - 1);
+            in[in_block_pos / SUB_GROUP_SIZE] = input[idx];
 
             // If we have row break, move to the next row.
             if (in_block_next_x_pos == IN_BLOCK_WIDTH)
@@ -125,8 +130,10 @@ KERNEL(convolution_gpu_bfyx_os_iyx_osv16)(
             // Horizontal position in input block after read.
             const uint in_block_next_x_pos = in_block_pos % IN_BLOCK_WIDTH + SUB_GROUP_SIZE;
 
-            if (in_block_next_x_pos <= IN_BLOCK_WIDTH) { //
-                in[in_block_pos / SUB_GROUP_SIZE] = input[tmp_in_addr + (in_block_pos % IN_BLOCK_WIDTH) * INPUT0_X_PITCH];
+            if (in_block_next_x_pos <= IN_BLOCK_WIDTH) {
+                uint idx = tmp_in_addr + (in_block_pos % IN_BLOCK_WIDTH) * INPUT0_X_PITCH;
+                idx = min(idx, input0_physical_len - 1);
+                in[in_block_pos / SUB_GROUP_SIZE] = input[idx];
 
                 // If we have row break, move to the next row.
                 if (in_block_next_x_pos == IN_BLOCK_WIDTH)
@@ -157,7 +164,9 @@ KERNEL(convolution_gpu_bfyx_os_iyx_osv16)(
         in_addr += INPUT0_FEATURE_PITCH;
 
         for(int pf=0; pf<PREFETCH; pf++) {
-            w[pf] = weights[weight_addr]; weight_addr += OSV_SIZE;
+            uint weight_addr_safe = min(weight_addr, filter_physical_len - 1);
+            w[pf] = weights[weight_addr_safe];
+            weight_addr += OSV_SIZE;
         }
 
         uint wi = 0;
@@ -167,7 +176,6 @@ KERNEL(convolution_gpu_bfyx_os_iyx_osv16)(
             uint kc = 0; // kc = Kernel Column
             LOOP(FILTER_SIZE_X, kc,
             {
-                //w = weights[weight_addr];
                 for(uint br=0; br<OUTPUT_BLOCK_HEIGHT; br++) {
                     for(uint bc=0; bc<OUTPUT_BLOCK_WIDTH; bc++) {
 
@@ -178,11 +186,11 @@ KERNEL(convolution_gpu_bfyx_os_iyx_osv16)(
 #else
                         UNIT_TYPE val = _sub_group_shuffle( in[br * STRIDE_SIZE_Y + kr * DILATION_SIZE_Y], bc * STRIDE_SIZE_X + kc * DILATION_SIZE_X);
 #endif
-
                         out[br * OUTPUT_BLOCK_WIDTH + bc] = mad(w[wi % PREFETCH], val, out[br * OUTPUT_BLOCK_WIDTH + bc]);
                     }
                 }
-                w[wi % PREFETCH] = weights[weight_addr];
+                uint weight_addr_safe = min(weight_addr, filter_physical_len - 1);
+                w[wi % PREFETCH] = weights[weight_addr_safe];
                 weight_addr += OSV_SIZE; // weights must be stored in just the right SIMD swizzled format for this to work, see host code for details.
                 wi++;
             });
@@ -237,7 +245,14 @@ KERNEL(convolution_gpu_bfyx_os_iyx_osv16)(
     for(uint r = 0; r < OUTPUT_BLOCK_HEIGHT; r++) {
         if(!(or + r >= OUTPUT_SIZE_Y))
         {
-#if (OUTPUT_SIZE_X % OUTPUT_BLOCK_WIDTH) == 0 // in this case we don't need to check if we're outside of X boundaries
+
+#if !IS_DYNAMIC
+#if (OUTPUT_SIZE_X % OUTPUT_BLOCK_WIDTH) == 0
+    #define CAN_SKIP_CHECK
+#endif
+#endif
+
+#ifdef CAN_SKIP_CHECK // in this case we don't need to check if we're outside of X boundaries
             uint out_vstore_offset = 0;
             #if (OUT_BLOCK_WIDTH % 8) > 3
             MAKE_VECTOR_TYPE(UNIT_TYPE, 4) tmp = MAKE_VECTOR_TYPE(UNIT_TYPE, 4)(

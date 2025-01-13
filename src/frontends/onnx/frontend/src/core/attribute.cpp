@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -6,16 +6,16 @@
 
 #include "core/graph.hpp"
 #include "core/model.hpp"
-#include "ngraph/log.hpp"
 
-namespace ngraph {
-namespace onnx_import {
-Subgraph Attribute::get_subgraph(const Graph* parent_graph) const {
-    if (m_attribute_proto->type() != ONNX_NAMESPACE::AttributeProto_AttributeType_GRAPH) {
-        throw error::attribute::InvalidData{m_attribute_proto->type()};
+namespace ov {
+namespace frontend {
+namespace onnx {
+Subgraph Attribute::get_subgraph(Graph* parent_graph) const {
+    if (m_attribute_proto->type() != AttributeProto_AttributeType::AttributeProto_AttributeType_GRAPH) {
+        ONNX_INVALID_ATTR(m_attribute_proto->type(), "GRAPH");
     }
 
-    auto model_proto = std::make_shared<ONNX_NAMESPACE::ModelProto>();
+    auto model_proto = std::make_shared<ModelProto>();
 
     const auto& graph = m_attribute_proto->g();
     model_proto->mutable_graph()->CopyFrom(graph);
@@ -64,12 +64,12 @@ ov::Any Attribute::get_any() const {
     case Type::tensor:
     case Type::graph:
     case Type::sparse_tensor:
-        throw ov::Exception(get_name() + " attribute is not supported.");
+        OPENVINO_THROW(get_name(), " attribute is not supported.");
     default:
-        throw ov::Exception("Unknown type of attribute " + get_name());
+        OPENVINO_THROW("Unknown type of attribute ", get_name());
     }
 }
 
-}  // namespace onnx_import
-
-}  // namespace ngraph
+}  // namespace onnx
+}  // namespace frontend
+}  // namespace ov

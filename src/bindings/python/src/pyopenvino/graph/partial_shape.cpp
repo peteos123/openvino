@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -18,6 +18,17 @@
 
 namespace py = pybind11;
 
+template <typename T>
+bool compare_shape(const ov::PartialShape& a, const T& b) {
+    if (a.is_dynamic()) {
+        throw py::type_error("Cannot compare dynamic shape with " + std::string(py::str(py::type::of(b))));
+    }
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(), [](const ov::Dimension& elem_a, const py::handle& elem_b) {
+               return elem_a == elem_b.cast<int64_t>();
+           });
+}
+
 void regclass_graph_PartialShape(py::module m) {
     py::class_<ov::PartialShape, std::shared_ptr<ov::PartialShape>> shape(m, "PartialShape");
     shape.doc() = "openvino.runtime.PartialShape wraps ov::PartialShape";
@@ -32,7 +43,30 @@ void regclass_graph_PartialShape(py::module m) {
     }));
     shape.def(py::init<const std::string&>(), py::arg("shape"));
 
-    shape.def_static("dynamic", &ov::PartialShape::dynamic, py::arg("rank") = ov::Dimension());
+    shape.def_static("dynamic",
+                     &ov::PartialShape::dynamic,
+                     py::arg("rank") = ov::Dimension(),
+                     R"(
+                       Construct a PartialShape with the given rank and all dimensions are dynamic.
+
+                       :param rank: The rank of the PartialShape. This is the number of dimensions in the shape.
+                       :type rank: openvino.Dimension
+                       :return: A PartialShape with the given rank (or undefined rank if not provided), and all dimensions are dynamic.
+                    )");
+
+    shape.def_static(
+        "dynamic",
+        [](int64_t rank) {
+            return ov::PartialShape::dynamic(ov::Dimension(rank));
+        },
+        py::arg("rank"),
+        R"(
+            Construct a PartialShape with the given rank and all dimensions are dynamic.
+
+            :param rank: The rank of the PartialShape. This is the number of dimensions in the shape.
+            :type rank: int
+            :return: A PartialShape with the given rank, and all dimensions are dynamic.
+        )");
 
     shape.def_property_readonly("is_dynamic",
                                 &ov::PartialShape::is_dynamic,
@@ -156,6 +190,19 @@ void regclass_graph_PartialShape(py::module m) {
             return a == b;
         },
         py::is_operator());
+    shape.def(
+        "__eq__",
+        [](const ov::PartialShape& a, const py::tuple& b) {
+            return compare_shape<py::tuple>(a, b);
+        },
+        py::is_operator());
+
+    shape.def(
+        "__eq__",
+        [](const ov::PartialShape& a, const py::list& b) {
+            return compare_shape<py::list>(a, b);
+        },
+        py::is_operator());
 
     shape.def("__len__", [](const ov::PartialShape& self) {
         return self.size();
@@ -169,10 +216,23 @@ void regclass_graph_PartialShape(py::module m) {
         self[key] = d;
     });
 
-    shape.def("__getitem__", [](const ov::PartialShape& self, size_t key) {
+    shape.def("__getitem__", [](const ov::PartialShape& self, int64_t key) {
+        if (key < 0) {
+            key += self.size();
+        }
         return self[key];
     });
 
+    shape.def("__getitem__", [](const ov::PartialShape& self, py::slice& slice) {
+        size_t start, stop, step, slicelength;
+        if (!slice.compute(self.size(), &start, &stop, &step, &slicelength)) {
+            throw py::error_already_set();
+        }
+        ov::PartialShape result;
+        result.resize(slicelength);
+        Common::shape_helpers::get_slice(result, self, start, step, slicelength);
+        return result;
+    });
     shape.def(
         "__iter__",
         [](ov::PartialShape& self) {
@@ -187,7 +247,7 @@ void regclass_graph_PartialShape(py::module m) {
     });
 
     shape.def("__repr__", [](const ov::PartialShape& self) -> std::string {
-        return "<PartialShape: " + py::cast(self).attr("__str__")().cast<std::string>() + ">";
+        return "<" + Common::get_class_name(self) + ": " + py::cast(self).attr("__str__")().cast<std::string>() + ">";
     });
 
     shape.def("__copy__", [](const ov::PartialShape& self) -> ov::PartialShape {

@@ -1,24 +1,24 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "ngraph/shape.hpp"
+#include "openvino/core/shape.hpp"
 
-#include "ngraph/util.hpp"
-
-using namespace std;
+#include "openvino/core/shape_util.hpp"
+#include "openvino/core/validation_util.hpp"
+#include "openvino/util/common_util.hpp"
 
 std::ostream& ov::operator<<(std::ostream& s, const Shape& shape) {
     s << "[";
-    s << ngraph::join(shape, ",");
+    s << ov::util::join(shape, ",");
     s << "]";
     return s;
 }
 
 namespace {
-size_t stringToSizeT(const string& valStr) {
+size_t stringToSizeT(const std::string& valStr) {
     size_t ret{0};
-    istringstream ss(valStr);
+    std::istringstream ss(valStr);
     if (!ss.eof()) {
         ss >> ret;
     }
@@ -37,10 +37,10 @@ ov::Shape::Shape(const Shape& axis_lengths) = default;
 ov::Shape::Shape(size_t n, size_t initial_value) : std::vector<size_t>(n, initial_value) {}
 
 ov::Shape::Shape(const std::string& value) {
-    auto val = ngraph::trim(value);
+    auto val = ov::util::trim(value);
     if (val[0] == '[' && val[val.size() - 1] == ']')
         val = val.substr(1, val.size() - 2);
-    val = ngraph::trim(val);
+    val = ov::util::trim(val);
     std::vector<size_t> dims;
     std::stringstream ss(val);
     std::string field;
@@ -68,3 +68,22 @@ std::string ov::Shape::to_string() const {
     shape_str_stream << *this;
     return shape_str_stream.str();
 }
+
+namespace ov {
+
+typename Shape::reference Shape::operator[](std::ptrdiff_t i) {
+    return std::vector<size_t>::operator[](util::normalize(i, size()));
+}
+
+typename Shape::const_reference Shape::operator[](std::ptrdiff_t i) const {
+    return std::vector<size_t>::operator[](util::normalize(i, size()));
+}
+
+typename Shape::reference Shape::at(std::ptrdiff_t i) {
+    return std::vector<size_t>::operator[](util::normalize_shape_index(i, size()));
+}
+
+typename Shape::const_reference Shape::at(std::ptrdiff_t i) const {
+    return std::vector<size_t>::operator[](util::normalize_shape_index(i, size()));
+}
+}  // namespace ov

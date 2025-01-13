@@ -1,111 +1,115 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "snippets/generator.hpp"
-#include "snippets/pass/assign_registers.hpp"
-#include "snippets/pass/vector_to_scalar.hpp"
-#include "snippets/pass/insert_load_store.hpp"
-#include "snippets/op/tile.hpp"
+
+#include "snippets/itt.hpp"
+#include "snippets/runtime_configurator.hpp"
+#include "snippets/lowered/linear_ir.hpp"
+#include "snippets/lowered/expression.hpp"
 #include "snippets/op/kernel.hpp"
-#include <snippets/itt.hpp>
+#include "snippets/op/memory_access.hpp"
 
-#include <ngraph/pass/manager.hpp>
+namespace ov {
+namespace snippets {
 
-auto ngraph::snippets::getRegisters(std::shared_ptr<ngraph::Node>& n) -> ngraph::snippets::RegInfo {
-    OV_ITT_SCOPED_TASK(ngraph::pass::itt::domains::SnippetsTransform, "Snippets::getRegisters")
-    auto rt = n->get_rt_info();
+LoweringResult Generator::generate(const lowered::LinearIRPtr& linear_ir, const void* compile_params) const {
+    OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::Generator::generate")
 
-    // ToDo: change to reg_t
-    std::vector<size_t> rin, rout;
+    // Before code gen we have to reset KernelExecutor Table - it should be empty
+    target->get_runtime_configurator()->reset_kernel_executor_table();
 
-    auto it_rt = rt.find("reginfo");
-    if (it_rt != rt.end()) {
-        for (auto reg : it_rt->second.as<std::vector<size_t>>()) {
-            rout.push_back(reg);
-        }
-    }
+    OV_ITT_TASK_CHAIN(GENERATE, ov::pass::itt::domains::SnippetsTransform, "Snippets::Generator", "::InitEmitters")
 
-    for (const auto& input : n->inputs()) {
-        auto rt = input.get_source_output().get_node_shared_ptr()->get_rt_info();
-        auto it_rt = rt.find("reginfo");
-        if (it_rt != rt.end()) {
-            for (auto& reg : it_rt->second.as<std::vector<size_t>>()) {
-                rin.push_back(reg);
-            }
-        }
-    }
-    return std::make_pair(rin, rout);
-}
-
-ngraph::snippets::code ngraph::snippets::Generator::generate(std::shared_ptr<ov::Model>& m,
-                                                             const void* compile_params) const {
-    OV_ITT_SCOPED_TASK(ngraph::pass::itt::domains::SnippetsTransform, "Snippets::Generator::generate")
-    if (!target->is_supported())
-        throw ngraph_error("unsupported architecture for code genration");
-
-    auto params = m->get_parameters();
-    auto results = m->get_results();
-    auto in = params.size();
-    auto out = results.size();
-    std::vector<size_t> io_last_dims(in + out);
-    std::vector<size_t> io_data_sizes(in + out);
-    std::transform(params.begin(), params.end(), io_last_dims.begin(),
-                   [](const std::shared_ptr<Node>& n){return n->get_output_shape(0).back();});
-    std::transform(results.begin(), results.end(), io_last_dims.begin() + in,
-                   [](const std::shared_ptr<Node>& n){return n->get_input_shape(0).back();});
-    std::transform(params.begin(), params.end(), io_data_sizes.begin(),
-                   [](const std::shared_ptr<Node>& n){return n->get_element_type().size();});
-    std::transform(results.begin(), results.end(), io_data_sizes.begin() + in,
-                   [](const std::shared_ptr<Node>& n){return n->get_element_type().size();});
-
-    OV_ITT_TASK_CHAIN(GENERATE, ngraph::pass::itt::domains::SnippetsTransform, "Snippets::Generator", "::VectorTile")
-    // vector tile
-    std::vector<AllocatedEmitter> lowered;
-    for (auto n : m->get_ordered_ops()) {
-        lowered.emplace_back(std::make_pair(target->get(n->get_type_info())(n), ngraph::snippets::getRegisters(n)));
-    }
-    OV_ITT_TASK_NEXT(GENERATE, "::ScalarTile")
-
-    // scalar tile
-    auto m_scalar = ov::clone_model(*m.get());
-    ngraph::pass::Manager mng;
-    mng.register_pass<ngraph::snippets::pass::SetScalarCountForLoad>();
-    mng.register_pass<ngraph::snippets::pass::SetScalarCountForStore>();
-    mng.run_passes(m_scalar);
-    OV_ITT_TASK_NEXT(GENERATE, "::ScalarTile_get")
-    std::vector<AllocatedEmitter> scalar_lowered;
-    for (auto n : m_scalar->get_ordered_ops()) {
-        scalar_lowered.emplace_back(std::make_pair(target->get(n->get_type_info())(n), ngraph::snippets::getRegisters(n)));
-    }
-    OV_ITT_TASK_NEXT(GENERATE, "::Tiles1D");
-    // wrapping into tiles1D
-    //todo: in, out, and io_last_dims should derive naturally from the graph representation
-    const auto& vector_tile = std::make_shared<ngraph::snippets::op::Tile>(lowered, target->get_lanes(), in, out, io_last_dims, io_data_sizes);
-    const auto& vector_region = std::make_pair(target->get(ngraph::snippets::op::Tile::get_type_info_static())(vector_tile),
-                                   std::make_pair(std::vector<size_t>{}, std::vector<size_t>{}));
-    const auto& scalar_tile = std::make_shared<ngraph::snippets::op::Tile>(scalar_lowered, 1, in, out, io_last_dims, io_data_sizes);
-    const auto& scalar_region = std::make_pair(target->get(ngraph::snippets::op::Tile::get_type_info_static())(scalar_tile),
-                    std::make_pair(std::vector<size_t>{}, std::vector<size_t>{}));
-
-    OV_ITT_TASK_NEXT(GENERATE, "::Tiles2D")
-    // wrapping into tiles2D
-    auto tile_scheduler = std::make_shared<ngraph::snippets::op::TileScheduler>(vector_region, scalar_region);
-    tile_scheduler->compile_params = compile_params;
-    const auto& tile_scheduler_region = std::make_pair(target->get(ngraph::snippets::op::TileScheduler::get_type_info_static())(tile_scheduler),
-                                                       std::make_pair(std::vector<size_t>({in, out, target->get_lanes()}), std::vector<size_t>{}));
+    OPENVINO_ASSERT(target->is_supported(), "unsupported architecture for code generation");
+    linear_ir->init_emitters(target);
 
     OV_ITT_TASK_NEXT(GENERATE, "::EmitCode")
-    // emission
-    auto tiles2DKernel = std::make_shared<ngraph::snippets::op::Kernel>(std::vector<AllocatedEmitter> {tile_scheduler_region});
-    tiles2DKernel->compile_params = compile_params;
-    std::shared_ptr<Emitter> kernel = target->get(ngraph::snippets::op::Kernel::get_type_info_static())(tiles2DKernel);
-    kernel->emit_code({in, out}, {});
+
+    const auto kernel_op = op::Kernel::make_kernel(*linear_ir);
+    kernel_op->compile_params = compile_params;
+    const auto kernel_expr = linear_ir->get_expr_factory()->build(kernel_op, std::vector<lowered::PortConnectorPtr>{});
+    const auto kernel = target->get(kernel_expr->get_node()->get_type_info())(kernel_expr);
+
+    kernel->emit_code({}, {});
+
     OV_ITT_TASK_NEXT(GENERATE, "::EmitData")
-    lowered.insert(lowered.end(), scalar_lowered.begin(), scalar_lowered.end());
-    for (auto& op : lowered) {
-        op.first->emit_data();
+    for (auto& l : linear_ir->get_ops()) {
+        l->get_emitter()->emit_data();
     }
     OV_ITT_TASK_NEXT(GENERATE, "::GetSnippet")
-    return target->get_snippet();
+
+    LoweringResult result;
+    // 1. some emitters use precompiled kernels. They need to be saved, so the kernels are accessible at runtime.
+    // 2. perf count node as field of emitter should be alive at runtime.
+    // 3. Emitters with segfault detector debug capabilty also need to be accessible at runtime.
+    for (const auto& expr : *linear_ir) {
+        const auto& emitter = expr->get_emitter();
+        if (uses_precompiled_kernel(emitter))
+            result.m_saved_emitters.emplace_back(emitter);
+    }
+    result.compiled_snippet = target->get_snippet();
+    result.kernel_executor_table = target->get_runtime_configurator()->get_kernel_executor_table();
+    // In static case some kernel executors might've been registered during code emission.
+    // We need to update them, so appropriate kernels will be compiled.
+    // In dynamic case it should be handled by RuntimeConfigurator
+    if (!linear_ir->is_dynamic())
+        result.kernel_executor_table->update_state(linear_ir);
+
+    return result;
 }
+
+std::shared_ptr<const TargetMachine> Generator::get_target_machine() const {
+    return target;
+}
+
+RegType Generator::get_op_out_reg_type(const ov::Output<Node>& out) const {
+    auto reg_type = get_specific_op_out_reg_type(out);
+    if (reg_type != RegType::undefined)
+        return reg_type;
+    const auto op = out.get_node_shared_ptr();
+    if (ov::as_type_ptr<ov::op::v0::Parameter>(op) ||
+        ov::as_type_ptr<ov::op::v0::Result>(op) ||
+        ov::as_type_ptr<op::LoopBegin>(op) ||
+        ov::as_type_ptr<op::LoopEnd>(op) ||
+        ov::as_type_ptr<op::Brgemm>(op) ||
+        ov::as_type_ptr<op::Buffer>(op) ||
+        ov::as_type_ptr<op::RankNormalization>(op) ||
+        ov::as_type_ptr<op::Reshape>(op) ||
+        ov::as_type_ptr<op::Reorder>(op) ||
+        ov::as_type_ptr<snippets::op::Store>(op)
+#ifdef SNIPPETS_DEBUG_CAPS
+        || ov::as_type_ptr<op::PerfCountBeginBase>(op)
+        || ov::as_type_ptr<op::PerfCountEndBase>(op)
+#endif
+        )
+        return RegType::gpr;
+    else if (ov::as_type_ptr<snippets::op::Load>(op) ||
+             ov::as_type_ptr<snippets::op::BroadcastLoad>(op) ||
+             ov::op::util::is_unary_elementwise_arithmetic(op) ||
+             ov::op::util::is_binary_elementwise_arithmetic(op) ||
+             ov::op::util::is_binary_elementwise_comparison(op) ||
+             ov::op::util::is_binary_elementwise_logical(op) ||
+             ov::as_type_ptr<ov::op::v1::LogicalNot>(op) ||
+             ov::as_type_ptr<ov::op::v0::PRelu>(op) ||
+             ov::as_type_ptr<ov::op::v0::Convert>(op) ||
+             ov::as_type_ptr<ov::op::v1::Select>(op) ||
+             ov::as_type_ptr<op::VectorBuffer>(op) ||
+             ov::as_type_ptr<op::BroadcastMove>(op) ||
+             ov::as_type_ptr<op::Scalar>(op) ||
+             ov::as_type_ptr<op::HorizonMax>(op) ||
+             ov::as_type_ptr<op::HorizonSum>(op) ||
+             ov::as_type_ptr<op::Fill>(op))
+        return RegType::vec;
+    else
+        OPENVINO_THROW("Register type of the operation " + std::string(op->get_type_name()) + " isn't determined!");
+    return reg_type;
+}
+
+RegType Generator::get_specific_op_out_reg_type(const ov::Output<Node>& out) const {
+    OPENVINO_THROW("Register type of the operation " + std::string(out.get_node()->get_type_name()) + " isn't determined!");
+}
+
+}// namespace snippets
+}// namespace ov

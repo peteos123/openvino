@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -33,13 +33,6 @@ struct mvn_params : public base_params {
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// mvn_optional_params
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-struct mvn_optional_params : optional_params {
-    mvn_optional_params() : optional_params(KernelType::MVN) {}
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // MVNKernelBase
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 class MVNKernelBase : public KernelBaseOpenCL {
@@ -52,16 +45,18 @@ public:
         size_t leftovers;
         size_t dataSetsCount;
         size_t dataSetSize;
+        size_t maxSlmSize;
 
-        DispatchData() : itemsNum(0), leftovers(0), dataSetsCount(0), dataSetSize(0) {}
+        DispatchData() : itemsNum(0), leftovers(0), dataSetsCount(0), dataSetSize(0), maxSlmSize(0) {}
     };
 
 protected:
-    bool Validate(const Params&, const optional_params&) const override;
+    bool Validate(const Params&) const override;
     virtual JitConstants GetJitConstants(const mvn_params& params, DispatchData dispatchData) const;
     virtual DispatchData SetDefault(const mvn_params& params) const;
     virtual std::string GetKernelName(const mvn_params&) const { return kernelName; }
-    KernelsData GetCommonKernelsData(const Params& params, const optional_params&) const;
+    KernelsData GetCommonKernelsData(const Params& params) const;
     Datatype GetActivationType(const mvn_params& params) const;
+    void GetUpdateDispatchDataFunc(KernelData& kd) const override;
 };
 }  // namespace kernel_selector

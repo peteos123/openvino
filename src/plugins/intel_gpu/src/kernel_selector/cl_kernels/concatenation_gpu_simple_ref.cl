@@ -1,10 +1,18 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "include/fetch_utils.cl"
 
-KERNEL (concatenation_gpu_ref)(__global INPUT0_TYPE* input, __global OUTPUT_TYPE* output, uint output_offset_in_concat_axis)
+KERNEL (concatenation_gpu_ref)(
+    OPTIONAL_SHAPE_INFO_ARG
+    __global INPUT0_TYPE* input,
+    __global OUTPUT_TYPE* output,
+    uint output_offset_in_concat_axis
+#if HAS_FUSED_OPS_DECLS
+    , FUSED_OPS_DECLS
+#endif
+)
 {
     const uint x = (uint)get_global_id(0) % INPUT0_SIZE_X;
     const uint y = (uint)get_global_id(0) / INPUT0_SIZE_X;
@@ -36,8 +44,15 @@ KERNEL (concatenation_gpu_ref)(__global INPUT0_TYPE* input, __global OUTPUT_TYPE
 #   error concatenation_gpu_bfzyx_ref.cl: Unrecognized concat axis.
 #endif
 
-    uint input_offset  = FUNC_CALL(get_input_index)(b, f, w, z, y, x);
-    uint output_offset = FUNC_CALL(get_output_index)(out_b, out_f, out_w, out_z, out_y, out_x);
+    uint input_offset  = FUNC_CALL(get_input_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, y, x);
+    uint output_offset = FUNC_CALL(get_output_index)(OPTIONAL_SHAPE_INFO_TENSOR out_b, out_f, out_w, out_z, out_y, out_x);
 
-    output[output_offset] = TO_OUTPUT_TYPE(ACTIVATION(input[input_offset], ACTIVATION_PARAMS));
+    INPUT0_TYPE result = input[input_offset];
+
+#if HAS_FUSED_OPS
+    FUSED_OPS;
+    output[output_offset] = TO_OUTPUT_TYPE(FUSED_OPS_RESULT);
+#else
+    output[output_offset] = TO_OUTPUT_TYPE(ACTIVATION(result, ACTIVATION_PARAMS));
+#endif
 }

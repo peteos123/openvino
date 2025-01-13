@@ -1,23 +1,23 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
+#include "ctc_greedy_decoder_seq_len.h"
+
+#include <openvino/op/ctc_greedy_decoder_seq_len.hpp>
 #include <string>
 #include <vector>
 
-#include <ngraph/op/ctc_greedy_decoder_seq_len.hpp>
-#include "ie_parallel.hpp"
-#include "ctc_greedy_decoder_seq_len.h"
-
-using namespace InferenceEngine;
+#include "openvino/core/parallel.hpp"
 
 namespace ov {
 namespace intel_cpu {
 namespace node {
 
-bool CTCGreedyDecoderSeqLen::isSupportedOperation(const std::shared_ptr<const ngraph::Node>& op, std::string& errorMessage) noexcept {
+bool CTCGreedyDecoderSeqLen::isSupportedOperation(const std::shared_ptr<const ov::Node>& op,
+                                                  std::string& errorMessage) noexcept {
     try {
-        const auto greedyDecOp = ngraph::as_type_ptr<const ngraph::op::v6::CTCGreedyDecoderSeqLen>(op);
+        const auto greedyDecOp = ov::as_type_ptr<const ov::op::v6::CTCGreedyDecoderSeqLen>(op);
         if (!greedyDecOp) {
             errorMessage = "Node is not an instance of the CTCGreedyDecoderSeqLen operation from operation set v6.";
             return false;
@@ -28,25 +28,25 @@ bool CTCGreedyDecoderSeqLen::isSupportedOperation(const std::shared_ptr<const ng
     return true;
 }
 
-CTCGreedyDecoderSeqLen::CTCGreedyDecoderSeqLen(const std::shared_ptr<ngraph::Node>& op, const GraphContext::CPtr context)
-    : Node(op, context, NgraphShapeInferFactory(op, EMPTY_PORT_MASK)) {
+CTCGreedyDecoderSeqLen::CTCGreedyDecoderSeqLen(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr context)
+    : Node(op, context, NgraphShapeInferFactory(op)) {
     std::string errorMessage;
     if (!isSupportedOperation(op, errorMessage)) {
-        IE_THROW(NotImplemented) << errorMessage;
+        OPENVINO_THROW_NOT_IMPLEMENTED(errorMessage);
     }
 
     errorPrefix = "CTCGreedyDecoderSeqLen layer with name '" + op->get_friendly_name() + "' ";
     if (getOriginalInputsNumber() < 2 || getOriginalInputsNumber() > 3)
-        IE_THROW() << errorPrefix << "has invalid number of input edges: " << getOriginalInputsNumber();
+        OPENVINO_THROW(errorPrefix, "has invalid number of input edges: ", getOriginalInputsNumber());
     if (getOriginalOutputsNumber() != 2)
-        IE_THROW() << errorPrefix << "has invalid number of outputs edges: " << getOriginalOutputsNumber();
+        OPENVINO_THROW(errorPrefix, "has invalid number of outputs edges: ", getOriginalOutputsNumber());
 
     const auto& dataDims = getInputShapeAtPort(DATA_INDEX).getDims();
     const auto& seqDims = getInputShapeAtPort(SEQUENCE_LENGTH_INDEX).getDims();
     if (!dimsEqualWeak(dataDims[0], seqDims[0]))
-        IE_THROW() << errorPrefix << "has invalid input shapes.";
+        OPENVINO_THROW(errorPrefix, "has invalid input shapes.");
 
-    auto greedyDecOp = ngraph::as_type_ptr<const ngraph::op::v6::CTCGreedyDecoderSeqLen>(op);
+    auto greedyDecOp = ov::as_type_ptr<const ov::op::v6::CTCGreedyDecoderSeqLen>(op);
     mergeRepeated = greedyDecOp->get_merge_repeated();
 }
 
@@ -54,49 +54,51 @@ void CTCGreedyDecoderSeqLen::initSupportedPrimitiveDescriptors() {
     if (!supportedPrimitiveDescriptors.empty())
         return;
 
-    Precision inDataPrecision = getOriginalInputPrecisionAtPort(DATA_INDEX);
-    if (inDataPrecision != Precision::FP32 && inDataPrecision != Precision::BF16)
-        IE_THROW() << errorPrefix << "has unsupported 'data' input precision: " << inDataPrecision;
+    ov::element::Type inDataPrecision = getOriginalInputPrecisionAtPort(DATA_INDEX);
+    if (!one_of(inDataPrecision, ov::element::f32, ov::element::bf16, ov::element::f16))
+        OPENVINO_THROW(errorPrefix, "has unsupported 'data' input precision: ", inDataPrecision);
 
-    Precision seqLenPrecision = getOriginalInputPrecisionAtPort(SEQUENCE_LENGTH_INDEX);
-    if (seqLenPrecision != Precision::I32 && seqLenPrecision != Precision::I64)
-        IE_THROW() << errorPrefix << "has unsupported 'sequence_length' input precision: " << seqLenPrecision;
+    ov::element::Type seqLenPrecision = getOriginalInputPrecisionAtPort(SEQUENCE_LENGTH_INDEX);
+    if (seqLenPrecision != ov::element::i32 && seqLenPrecision != ov::element::i64)
+        OPENVINO_THROW(errorPrefix, "has unsupported 'sequence_length' input precision: ", seqLenPrecision);
 
     std::vector<PortConfigurator> inDataConf;
     inDataConf.reserve(inputShapes.size());
-    inDataConf.emplace_back(LayoutType::ncsp, Precision::FP32);
-    for (int i = 1; i < inputShapes.size(); ++i)
-        inDataConf.emplace_back(LayoutType::ncsp, Precision::I32);
+    inDataConf.emplace_back(LayoutType::ncsp, ov::element::f32);
+    for (size_t i = 1; i < inputShapes.size(); ++i)
+        inDataConf.emplace_back(LayoutType::ncsp, ov::element::i32);
 
     addSupportedPrimDesc(inDataConf,
-                         {{LayoutType::ncsp, Precision::I32},
-                          {LayoutType::ncsp, Precision::I32}},
+                         {{LayoutType::ncsp, ov::element::i32}, {LayoutType::ncsp, ov::element::i32}},
                          impl_desc_type::ref_any);
 }
 
 void CTCGreedyDecoderSeqLen::execute(dnnl::stream strm) {
-    const float* probabilities = reinterpret_cast<const float *>(getParentEdgeAt(DATA_INDEX)->getMemoryPtr()->GetPtr());
-    const int* sequenceLengths = reinterpret_cast<const int *>(getParentEdgeAt(SEQUENCE_LENGTH_INDEX)->getMemoryPtr()->GetPtr());
-    int* decodedClasses =  reinterpret_cast<int *>(getChildEdgesAtPort(DECODED_CLASSES_INDEX)[0]->getMemoryPtr()->GetPtr());
-    int* decodedClassesLength = reinterpret_cast<int *>(getChildEdgesAtPort(DECODED_CLASSES_LENGTH_INDEX)[0]->getMemoryPtr()->GetPtr());
+    const float* probabilities = getSrcDataAtPortAs<const float>(DATA_INDEX);
+    const int* sequenceLengths = getSrcDataAtPortAs<const int>(SEQUENCE_LENGTH_INDEX);
+    int* decodedClasses = getDstDataAtPortAs<int>(DECODED_CLASSES_INDEX);
+    int* decodedClassesLength = getDstDataAtPortAs<int>(DECODED_CLASSES_LENGTH_INDEX);
 
-    const size_t B = getParentEdgeAt(DATA_INDEX)->getMemory().getStaticDims()[0];;
-    const size_t T = getParentEdgeAt(DATA_INDEX)->getMemory().getStaticDims()[1];;
-    const int C = getParentEdgeAt(DATA_INDEX)->getMemory().getStaticDims()[2];;
+    const size_t B = getParentEdgeAt(DATA_INDEX)->getMemory().getStaticDims()[0];
+    ;
+    const size_t T = getParentEdgeAt(DATA_INDEX)->getMemory().getStaticDims()[1];
+    ;
+    const int C = getParentEdgeAt(DATA_INDEX)->getMemory().getStaticDims()[2];
+    ;
     const size_t TC = T * C;
 
     int blankIndex = C - 1;
     if (inputShapes.size() > BLANK_INDEX)
-        blankIndex = (reinterpret_cast<const int  *>(getParentEdgeAt(BLANK_INDEX)->getMemoryPtr()->GetPtr()))[0];
+        blankIndex = (getSrcDataAtPortAs<const int>(BLANK_INDEX))[0];
 
     size_t workAmount = 0;
     for (size_t b = 0; b < B; b++) {
-        if (sequenceLengths[b] > T) {
-            std::string errorMsg = errorPrefix
-                                   + ". Sequence length " + std::to_string(sequenceLengths[b])
-                                   + " cannot be greater than according decoded classes dimension size "
-                                   + std::to_string(getChildEdgesAtPort(DECODED_CLASSES_INDEX)[0]->getMemory().getStaticDims()[1]);
-            IE_THROW() << errorMsg;
+        if (sequenceLengths[b] > static_cast<int>(T)) {
+            std::string errorMsg =
+                errorPrefix + ". Sequence length " + std::to_string(sequenceLengths[b]) +
+                " cannot be greater than according decoded classes dimension size " +
+                std::to_string(getChildEdgeAt(DECODED_CLASSES_INDEX)->getMemory().getStaticDims()[1]);
+            OPENVINO_THROW(errorMsg);
         }
         workAmount += sequenceLengths[b];
     }
@@ -144,7 +146,7 @@ void CTCGreedyDecoderSeqLen::execute(dnnl::stream strm) {
             }
             tStart = 0lu;
         }
-    }; // thread body
+    };  // thread body
 
     parallel_nt(0, threadBody);
 
@@ -155,8 +157,7 @@ void CTCGreedyDecoderSeqLen::execute(dnnl::stream strm) {
         int* shiftedOut = decodedClasses + b * T;
 
         for (size_t t = 0; t < actualSeqLen; ++t) {
-            if (*shiftedOut != blankIndex &&
-                !(mergeRepeated && *shiftedOut == prevClassIdx)) {
+            if (*shiftedOut != blankIndex && !(mergeRepeated && *shiftedOut == prevClassIdx)) {
                 decodedClasses[outputIndex++] = *shiftedOut;
             }
             prevClassIdx = *shiftedOut;
@@ -179,6 +180,6 @@ bool CTCGreedyDecoderSeqLen::needPrepareParams() const {
     return false;
 }
 
-}   // namespace node
-}   // namespace intel_cpu
-}   // namespace ov
+}  // namespace node
+}  // namespace intel_cpu
+}  // namespace ov

@@ -1,42 +1,25 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
 #include <cstdint>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <string>
 #include <unordered_map>
 
-#include "ngraph/except.hpp"
-#include "onnx_import/core/operator_set.hpp"
+#include "core/operator_set.hpp"
+#include "version_range.hpp"
 
-namespace ngraph {
-namespace onnx_import {
-namespace error {
-struct UnknownOperator : ngraph_error {
-    UnknownOperator(const std::string& name, const std::string& domain)
-        : ngraph_error{(domain.empty() ? "" : domain + ".") + name} {}
-};
-
-struct UnknownDomain : ngraph_error {
-    explicit UnknownDomain(const std::string& domain) : ngraph_error{domain} {}
-};
-
-struct UnsupportedVersion : ngraph_error {
-    UnsupportedVersion(const std::string& name, std::int64_t version, const std::string& domain)
-        : ngraph_error{"Unsupported operator version: " + (domain.empty() ? "" : domain + ".") + name + ":" +
-                       std::to_string(version)} {}
-};
-
-}  // namespace error
+namespace ov {
+namespace frontend {
+namespace onnx {
 
 class OperatorsBridge {
 public:
-    static constexpr const int LATEST_SUPPORTED_ONNX_OPSET_VERSION = ONNX_OPSET_VERSION;
-
     OperatorsBridge();
 
     OperatorsBridge(const OperatorsBridge&) = default;
@@ -77,6 +60,15 @@ public:
     void overwrite_operator(const std::string& name, const std::string& domain, Operator fn);
 
 private:
+    void register_operator_in_custom_domain(std::string name,
+                                            ov::frontend::onnx::VersionRange range,
+                                            Operator fn,
+                                            std::string domain,
+                                            std::string warning_mes = "");
+    void register_operator(std::string name,
+                           ov::frontend::onnx::VersionRange range,
+                           Operator fn,
+                           std::string warning_mes = "");
     // Registered operators structure
     // {
     //    domain_1: {
@@ -91,12 +83,9 @@ private:
     //    domain_2: { ... },
     //    ...
     // }
-    using DomainOpset = std::unordered_map<std::string, std::map<std::int64_t, Operator>>;
     std::unordered_map<std::string, DomainOpset> m_map;
 };
 
-constexpr const char* OPENVINO_ONNX_DOMAIN = "org.openvinotoolkit";
-
-}  // namespace onnx_import
-
-}  // namespace ngraph
+}  // namespace onnx
+}  // namespace frontend
+}  // namespace ov

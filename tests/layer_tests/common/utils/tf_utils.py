@@ -1,21 +1,45 @@
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
+import numpy as np
 import os
 import re
-
-import numpy as np
 import tensorflow as tf
 
-from openvino.tools.mo.ops.op import PermuteAttrs
-
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+
+def run_in_jenkins():
+    if "JENKINS_URL" in os.environ and len(os.environ["JENKINS_URL"]):
+        return True
+    return False
 
 
 def mix_array_with_value(input_array, value):
     input_shape = input_array.shape
     mask = np.random.randint(0, 2, input_shape).astype(bool)
     return np.where(mask, input_array, value)
+
+
+def mix_array_with_several_values(input_array, values, rng):
+    num_values = len(values)
+    input_shape = input_array.shape
+    mask = rng.choice(num_values + 1, input_shape).astype(np.int32)
+    for ind, value in enumerate(values):
+        input_array = np.where(mask == ind, input_array, value)
+    return input_array
+
+
+# mix two arrays with a list of value pairs
+def mix_two_arrays_with_several_values(input_array1, input_array2, values, rng):
+    num_values = len(values)
+    input_shape = input_array1.shape
+    # generate the common mask for both input arrays
+    mask = rng.choice(num_values + 1, input_shape).astype(np.int32)
+    for ind, value in enumerate(values):
+        input_array1 = np.where(mask == ind, input_array1, value[0])
+        input_array2 = np.where(mask == ind, input_array2, value[1])
+    return input_array1, input_array2
 
 
 def load_graph(model_file, output_nodes_for_freeze=None):
@@ -81,12 +105,25 @@ def children(op, graph):
     return set(op for out in op.outputs for op in out.consumers())
 
 
+def collect_control_dependencies(graph):
+    control_dependents_map = {}
+    for op in graph.get_operations():
+        for control_input in op.control_inputs:
+            if control_input.name not in control_dependents_map:
+                control_dependents_map[control_input.name] = [op]
+            else:
+                control_dependents_map[control_input.name].append(op)
+    return control_dependents_map
+
+
 def summarize_graph(model_path, output_nodes_for_freeze=None, reshape_net=None):
     placeholders = dict()
     variables = list()
     outputs = list()
     graph = load_graph(model_path, output_nodes_for_freeze)
-    unlikely_output_types = ['Const', 'Assign', 'NoOp', 'Placeholder', 'Assert', 'switch_t', 'switch_f']
+    unlikely_output_types = ['Const', 'Assign', 'NoOp', 'Placeholder', 'Assert', 'switch_t', 'switch_f',
+                             'TensorArrayCloseV3']
+    control_dependents_map = collect_control_dependencies(graph)
     for node in graph.as_graph_def().node:
         if node.op == 'Placeholder':
             node_dict = dict()
@@ -97,7 +134,7 @@ def summarize_graph(model_path, output_nodes_for_freeze=None, reshape_net=None):
             placeholders[node.name] = node_dict
         if node.op == "Variable" or node.op == "VariableV2":
             variables.append(node.name)
-        if len(children(node.name, graph)) == 0:
+        if len(children(node.name, graph)) == 0 and node.name not in control_dependents_map:
             if node.op not in unlikely_output_types and node.name.split('/')[-1] not in unlikely_output_types:
                 outputs.append(node.name)
     result = dict()
@@ -117,21 +154,12 @@ def summarize_graph(model_path, output_nodes_for_freeze=None, reshape_net=None):
     return result
 
 
-def permute_nhwc_to_nchw(shape, use_new_frontend=False):
-    if use_new_frontend:
-        return shape
-    perm = PermuteAttrs.get_nhwc_to_nchw_permutation(len(shape)).perm
-    new_shape = np.array(shape)[perm]
-    return new_shape
-
-
-def permute_nchw_to_nhwc(shape, use_new_frontend=False):
-    if use_new_frontend:
-        return shape
-    perm = PermuteAttrs.get_nchw_to_nhwc_permutation(len(shape)).perm
-    new_shape = np.array(shape)[perm]
-    return new_shape
-
-
 def permute_axis(axis, permutation_inv):
     return permutation_inv[axis]
+
+
+def save_to_pb(tf_model, path_to_saved_tf_model, model_name='model.pb'):
+    tf.io.write_graph(tf_model, path_to_saved_tf_model, model_name, False)
+    assert os.path.isfile(os.path.join(path_to_saved_tf_model, model_name)), "model.pb haven't been saved " \
+                                                                             "here: {}".format(path_to_saved_tf_model)
+    return os.path.join(path_to_saved_tf_model, model_name)

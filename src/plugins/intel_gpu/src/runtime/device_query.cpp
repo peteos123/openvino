@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -17,6 +17,7 @@ device_query::device_query(engine_types engine_type,
                            int ctx_device_id,
                            int target_tile_id) {
     switch (engine_type) {
+    case engine_types::sycl:
     case engine_types::ocl: {
         if (runtime_type != runtime_types::ocl)
             throw std::runtime_error("Unsupported runtime type for ocl engine");
@@ -26,10 +27,6 @@ device_query::device_query(engine_types engine_type,
         break;
     }
     default: throw std::runtime_error("Unsupported engine type in device_query");
-    }
-
-    if (_available_devices.empty()) {
-        throw std::runtime_error("No suitable devices found for requested engine and runtime types");
     }
 }
 }  // namespace cldnn

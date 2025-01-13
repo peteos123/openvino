@@ -1,13 +1,14 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
 #include <memory>
-#include <openvino/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
 #include <vector>
+
+#include "openvino/pass/matcher_pass.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 namespace pass {
@@ -18,7 +19,7 @@ class TRANSFORMATIONS_API SequenceFusion;
 }  // namespace ov
 
 /**
- * @ingroup ie_transformation_common_api
+ * @ingroup ov_transformation_common_api
  * @brief SequenceFusion transformation replaces a chain of Cells
  * operations with single Sequence op.
  *
@@ -29,6 +30,6 @@ class TRANSFORMATIONS_API SequenceFusion;
 
 class ov::pass::SequenceFusion : public ov::pass::MatcherPass {
 public:
-    OPENVINO_RTTI("SequenceFusion", "0");
+    OPENVINO_MATCHER_PASS_RTTI("SequenceFusion");
     SequenceFusion();
 };

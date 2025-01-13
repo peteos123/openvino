@@ -1,22 +1,22 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "transformations/common_optimizations/convert_compression_only_to_legacy.hpp"
+#include "transformations/fp16_compression/convert_compression_only_to_legacy.hpp"
 
 #include <gtest/gtest.h>
 
 #include <memory>
 #include <string>
 
-#include "common_test_utils/ngraph_test_utils.hpp"
+#include "common_test_utils/ov_test_utils.hpp"
 #include "openvino/core/model.hpp"
 #include "openvino/opsets/opset8.hpp"
 #include "openvino/pass/manager.hpp"
 #include "transformations/init_node_info.hpp"
 #include "transformations/rt_info/decompression.hpp"
 #include "transformations/utils/utils.hpp"
-
+using namespace ov;
 using namespace testing;
 
 TEST(TransformationTests, ConvertCompressionOnlyToLegacy) {
@@ -39,10 +39,10 @@ TEST(TransformationTests, ConvertCompressionOnlyToLegacy) {
         f = std::make_shared<ov::Model>(ov::NodeVector{conv}, ov::ParameterVector{input});
 
         ov::pass::Manager manager;
-        manager.register_pass<ngraph::pass::InitNodeInfo>();
+        manager.register_pass<ov::pass::InitNodeInfo>();
         manager.register_pass<ov::pass::ConvertCompressedOnlyToLegacy>();
         manager.run_passes(f);
-        ASSERT_NO_THROW(check_rt_info(f));
+        OV_ASSERT_NO_THROW(check_rt_info(f));
     }
 
     {
@@ -83,10 +83,10 @@ TEST(TransformationTests, ConvertCompressionOnlyToLegacyNoConvertion) {
         f = std::make_shared<ov::Model>(ov::NodeVector{conv}, ov::ParameterVector{input});
 
         ov::pass::Manager manager;
-        manager.register_pass<ngraph::pass::InitNodeInfo>();
+        manager.register_pass<ov::pass::InitNodeInfo>();
         manager.register_pass<ov::pass::ConvertCompressedOnlyToLegacy>();
         manager.run_passes(f);
-        ASSERT_NO_THROW(check_rt_info(f));
+        OV_ASSERT_NO_THROW(check_rt_info(f));
     }
 
     {

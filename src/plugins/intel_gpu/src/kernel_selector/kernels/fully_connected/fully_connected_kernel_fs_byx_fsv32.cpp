@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -28,8 +28,8 @@ ParamsKey FullyConnected_fs_byx_fsv32::GetSupportedKey() const {
     return k;
 }
 
-DeviceFeaturesKey FullyConnected_fs_byx_fsv32::get_required_device_features_key(const Params& params, const optional_params& options) const {
-    auto k = get_common_subgroups_device_features_key(params, options);
+DeviceFeaturesKey FullyConnected_fs_byx_fsv32::get_required_device_features_key(const Params& params) const {
+    auto k = get_common_subgroups_device_features_key(params);
     k.requires_subgroup_shuffle();
 
     return k;
@@ -37,7 +37,8 @@ DeviceFeaturesKey FullyConnected_fs_byx_fsv32::get_required_device_features_key(
 
 FullyConnected_fs_byx_fsv32::Parent::DispatchData FullyConnected_fs_byx_fsv32::SetDefault(
     const fully_connected_params& params,
-    int autoTuneIndex) const {
+    int autoTuneIndex,
+    int /*kernel_number*/) const {
     auto dispatchData = Parent::SetDefault(params, autoTuneIndex);
 
     auto blockSizeB = std::min(outputBlockSizeB, params.outputs[0].Batch().v);
@@ -70,11 +71,26 @@ JitConstants FullyConnected_fs_byx_fsv32::GetJitConstants(const fully_connected_
     return jit;
 }
 
-KernelsData FullyConnected_fs_byx_fsv32::GetKernelsData(const Params& params, const optional_params& options) const {
+bool FullyConnected_fs_byx_fsv32::Validate(const Params& p) const {
+    if (!FullyConnectedKernelBase::Validate(p)) {
+        return false;
+    }
+
+    const auto& params = static_cast<const fully_connected_params&>(p);
+
+    if (!params.bias.empty()) {
+        if (params.inputs[0].GetDType() != params.bias[0].GetDType()) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+KernelsData FullyConnected_fs_byx_fsv32::GetKernelsData(const Params& params) const {
     KernelsData res = {};
     for (size_t i = 0; i < autoTuneOptions.size(); i++) {
         KernelsData kd = GetTunedKernelsDataByIndex(params,
-                                                    options,
                                                     DataLayout::fs_b_yx_fsv32,
                                                     WeightsLayout::os_iyx_osv32__ai32,
                                                     static_cast<int>(i));
@@ -86,7 +102,7 @@ KernelsData FullyConnected_fs_byx_fsv32::GetKernelsData(const Params& params, co
     return res;
 }
 
-KernelsPriority FullyConnected_fs_byx_fsv32::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority FullyConnected_fs_byx_fsv32::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_5;
 }
 }  // namespace kernel_selector

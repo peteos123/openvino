@@ -1,11 +1,11 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <openvino/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
+#include "openvino/pass/matcher_pass.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 namespace pass {
@@ -16,19 +16,13 @@ class TRANSFORMATIONS_API BroadcastElementwiseFusion;
 }  // namespace ov
 
 /**
- * @ingroup ie_transformation_common_api
+ * @ingroup ov_transformation_common_api
  * @brief Removing Broadcast OP before ElementWise if output shape of Broadcast
  * are equal neighboring input shape of ElementWise.
  */
 
 class ov::pass::BroadcastElementwiseFusion : public ov::pass::MatcherPass {
 public:
-    OPENVINO_RTTI("BroadcastElementwiseFusion", "0");
+    OPENVINO_MATCHER_PASS_RTTI("BroadcastElementwiseFusion");
     BroadcastElementwiseFusion();
 };
-
-namespace ngraph {
-namespace pass {
-using ov::pass::BroadcastElementwiseFusion;
-}  // namespace pass
-}  // namespace ngraph

@@ -1,21 +1,22 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "gtest/gtest.h"
-#include "ngraph/ngraph.hpp"
-#include "ngraph/opsets/opset3.hpp"
-#include "util/visitor.hpp"
+#include "openvino/op/shuffle_channels.hpp"
+
+#include <gtest/gtest.h>
+
+#include "visitors/visitors.hpp"
 
 using namespace std;
-using namespace ngraph;
-using ngraph::test::NodeBuilder;
+using namespace ov;
+using ov::test::NodeBuilder;
 
 TEST(attributes, shuffle_channels_op) {
-    using ShuffleChannels = opset3::ShuffleChannels;
+    using ShuffleChannels = ov::op::v0::ShuffleChannels;
 
-    NodeBuilder::get_ops().register_factory<ShuffleChannels>();
-    auto data = make_shared<op::Parameter>(element::i32, Shape{2, 64, 16, 16});
+    NodeBuilder::opset().insert<ShuffleChannels>();
+    auto data = make_shared<ov::op::v0::Parameter>(element::i32, Shape{2, 64, 16, 16});
     auto axis = 1;
     auto groups = 2;
     auto shuffle_channels = make_shared<ShuffleChannels>(data, axis, groups);

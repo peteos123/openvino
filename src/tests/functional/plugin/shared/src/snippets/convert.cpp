@@ -12,18 +12,22 @@ namespace test {
 namespace snippets {
 
 std::string Convert::getTestCaseName(testing::TestParamInfo<ov::test::snippets::ConvertParams> obj) {
-    std::vector<ov::Shape> inputShape;
+    std::vector<InputShape> inputShape;
     std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> types;
     std::string targetDevice;
     size_t num_nodes, num_subgraphs;
     std::tie(inputShape, types, num_nodes, num_subgraphs, targetDevice) = obj.param;
 
     std::ostringstream result;
-    result << "IS=";
-    for (const auto& sh : inputShape)
-        result << CommonTestUtils::vec2str(sh) << "_";
-    result << "IT=" << CommonTestUtils::vec2str(types.first) << "_";
-    result << "OT=" << CommonTestUtils::vec2str(types.second) << "_";
+    for (size_t i = 0; i < inputShape.size(); ++i) {
+        result << "IS[" << i << "]=" << ov::test::utils::partialShape2str({inputShape[i].first}) << "_";
+        result << "TS[" << i << "]=";
+        for (const auto& shape : inputShape[i].second) {
+            result << ov::test::utils::vec2str(shape) << "_";
+        }
+    }
+    result << "IT=" << ov::test::utils::vec2str(types.first) << "_";
+    result << "OT=" << ov::test::utils::vec2str(types.second) << "_";
     result << "#N=" << num_nodes << "_";
     result << "#S=" << num_subgraphs << "_";
     result << "targetDevice=" << targetDevice;
@@ -31,14 +35,16 @@ std::string Convert::getTestCaseName(testing::TestParamInfo<ov::test::snippets::
 }
 
 void Convert::SetUp() {
-    std::vector<ov::Shape> inputShape;
+    std::vector<InputShape> inputShape;
     std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> types;
     std::tie(inputShape, types, ref_num_nodes, ref_num_subgraphs, targetDevice) = this->GetParam();
-    init_input_shapes(static_shapes_to_test_representation(inputShape));
-
-    auto f = ov::test::snippets::ConvertFunction(inputShape, types.first[0], types.second[0]);
+    init_input_shapes(inputShape);
+    auto f = ov::test::snippets::ConvertFunction(inputDynamicShapes, types.first[0], types.second[0]);
     function = f.getOriginal();
     output_type = types.second.front();
+    if (!configuration.count("SNIPPETS_MODE")) {
+        configuration.insert({"SNIPPETS_MODE", "IGNORE_CALLBACK"});
+    }
 }
 
 parameters Convert::generate_params_random() const {
@@ -47,6 +53,7 @@ parameters Convert::generate_params_random() const {
         case ov::element::f32:
         case ov::element::i32:
         case ov::element::bf16:
+        case ov::element::f16:
             startFrom = -10;
             range = 20;
             break;
@@ -69,29 +76,36 @@ void Convert::generate_inputs(const std::vector<ov::Shape>& targetInputStaticSha
     inputs.clear();
     const auto& funcInputs = function->inputs();
     const auto params = generate_params_random();
-    if (params.size() != funcInputs.size()) {
-        IE_THROW() << "Incorrect count of parameters for random generation and inputs of function!";
-    }
+    OPENVINO_ASSERT(params.size() == funcInputs.size(), "Incorrect count of parameters for random generation and inputs of function!");
 
     for (int i = 0; i < funcInputs.size(); ++i) {
         const auto& funcInput = funcInputs[i];
         ov::Tensor tensor;
         int32_t startFrom, range, resolution;
         std::tie(startFrom, range, resolution) = params[i];
-        tensor = ov::test::utils::create_and_fill_tensor(funcInput.get_element_type(), targetInputStaticShapes[i],
-                                                         range, startFrom, resolution);
+        ov::test::utils::InputGenerateData in_data;
+        in_data.start_from = startFrom;
+        in_data.range = range;
+        in_data.resolution = resolution;
+        tensor = ov::test::utils::create_and_fill_tensor(funcInput.get_element_type(), targetInputStaticShapes[i], in_data);
         inputs.insert({funcInput.get_node_shared_ptr(), tensor});
     }
 }
 
 void ConvertInput::SetUp() {
-    std::vector<ov::Shape> inputShape;
+    std::vector<InputShape> inputShape;
     std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> types;
     std::tie(inputShape, types, ref_num_nodes, ref_num_subgraphs, targetDevice) = this->GetParam();
-    init_input_shapes(static_shapes_to_test_representation(inputShape));
-
-    auto f = ov::test::snippets::ConvertInputFunction(inputShape, types.first[0], types.second[0]);
+    init_input_shapes(inputShape);
+    auto f = ov::test::snippets::ConvertInputFunction(inputDynamicShapes, types.first[0], types.second[0]);
     function = f.getOriginal();
+    if (!configuration.count("SNIPPETS_MODE")) {
+        configuration.insert({"SNIPPETS_MODE", "IGNORE_CALLBACK"});
+    }
+
+    if (types.first[0] == ov::element::f32 && types.second[0] == ov::element::bf16) {
+        abs_threshold = 3e-2;
+    }
 }
 
 parameters ConvertInput::generate_params_random() const {
@@ -102,14 +116,15 @@ parameters ConvertInput::generate_params_random() const {
         switch (funcInputs[i].get_element_type()) {
             case ov::element::f32:
             case ov::element::bf16:
+            case ov::element::f16:
                 startFrom = -10;
                 range = 20;
                 resolution = 7;
                 break;
             case ov::element::i32:
             case ov::element::i8:
-                startFrom = -10;
-                range = 20;
+                startFrom = -32;
+                range = 64;
                 break;
             case ov::element::u8:
                 startFrom = 10;
@@ -125,65 +140,87 @@ parameters ConvertInput::generate_params_random() const {
 }
 
 void ConvertOutput::SetUp() {
-    std::vector<ov::Shape> inputShape;
+    std::vector<InputShape> inputShape;
     std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> types;
     std::tie(inputShape, types, ref_num_nodes, ref_num_subgraphs, targetDevice) = this->GetParam();
-    init_input_shapes(static_shapes_to_test_representation(inputShape));
+    init_input_shapes(inputShape);
 
-    auto f = ov::test::snippets::ConvertOutputFunction(inputShape, types.first[0], types.second[0]);
+    auto f = ov::test::snippets::ConvertOutputFunction(inputDynamicShapes, types.first[0], types.second[0]);
     function = f.getOriginal();
     output_type = types.second.front();
+    if (!configuration.count("SNIPPETS_MODE")) {
+        configuration.insert({"SNIPPETS_MODE", "IGNORE_CALLBACK"});
+    }
+
+    if (types.first[0] == ov::element::bf16 && types.second[0] == ov::element::f32) {
+        abs_threshold = 4e-2;
+    }
 }
 
 void ConvertStub::SetUp() {
-    std::vector<ov::Shape> inputShape;
+    std::vector<InputShape> inputShape;
     std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> types;
     std::tie(inputShape, types, ref_num_nodes, ref_num_subgraphs, targetDevice) = this->GetParam();
-    init_input_shapes(static_shapes_to_test_representation(inputShape));
+    init_input_shapes(inputShape);
 
-    auto f = ov::test::snippets::ConvertStubFunction(inputShape, types.first[0], types.second[0]);
+    auto f = ov::test::snippets::ConvertStubFunction(inputDynamicShapes, types.first[0], types.second[0]);
     function = f.getOriginal();
     output_type = types.second.front();
+    if (!configuration.count("SNIPPETS_MODE")) {
+        configuration.insert({"SNIPPETS_MODE", "IGNORE_CALLBACK"});
+    }
 }
 
 void ConvertPartialInputsAndResults::SetUp() {
-    std::vector<ov::Shape> inputShape;
+    std::vector<InputShape> inputShape;
     std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> types;
     std::tie(inputShape, types, ref_num_nodes, ref_num_subgraphs, targetDevice) = this->GetParam();
-    init_input_shapes(static_shapes_to_test_representation(inputShape));
+    init_input_shapes(inputShape);
 
-    auto f = ov::test::snippets::ConvertPartialInputsAndResultsFunction(inputShape, types.first, types.second);
+    auto f = ov::test::snippets::ConvertPartialInputsAndResultsFunction(inputDynamicShapes, types.first, types.second);
     function = f.getOriginal();
+    if (!configuration.count("SNIPPETS_MODE")) {
+        configuration.insert({"SNIPPETS_MODE", "IGNORE_CALLBACK"});
+    }
 }
 
 void ConvertManyOnInputs::SetUp() {
-    std::vector<ov::Shape> inputShape;
+    std::vector<InputShape> inputShape;
     std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> types;
     std::tie(inputShape, types, ref_num_nodes, ref_num_subgraphs, targetDevice) = this->GetParam();
-    init_input_shapes(static_shapes_to_test_representation(inputShape));
+    init_input_shapes(inputShape);
 
-    auto f = ov::test::snippets::ConvertManyOnInputsFunction(inputShape, types.first);
+    auto f = ov::test::snippets::ConvertManyOnInputsFunction(inputDynamicShapes, types.first);
     function = f.getOriginal();
+    if (!configuration.count("SNIPPETS_MODE")) {
+        configuration.insert({"SNIPPETS_MODE", "IGNORE_CALLBACK"});
+    }
 }
 
 void ConvertManyOnOutputs::SetUp() {
-    std::vector<ov::Shape> inputShape;
+    std::vector<InputShape> inputShape;
     std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> types;
     std::tie(inputShape, types, ref_num_nodes, ref_num_subgraphs, targetDevice) = this->GetParam();
-    init_input_shapes(static_shapes_to_test_representation(inputShape));
+    init_input_shapes(inputShape);
 
-    auto f = ov::test::snippets::ConvertManyOnOutputsFunction(inputShape, types.first);
+    auto f = ov::test::snippets::ConvertManyOnOutputsFunction(inputDynamicShapes, types.first);
     function = f.getOriginal();
+    if (!configuration.count("SNIPPETS_MODE")) {
+        configuration.insert({"SNIPPETS_MODE", "IGNORE_CALLBACK"});
+    }
 }
 
 void ConvertManyOnInputOutput::SetUp() {
-    std::vector<ov::Shape> inputShape;
+    std::vector<InputShape> inputShape;
     std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> types;
     std::tie(inputShape, types, ref_num_nodes, ref_num_subgraphs, targetDevice) = this->GetParam();
-    init_input_shapes(static_shapes_to_test_representation(inputShape));
+    init_input_shapes(inputShape);
 
-    auto f = ov::test::snippets::ConvertManyOnInputOutputFunction(inputShape, types.first, types.second);
+    auto f = ov::test::snippets::ConvertManyOnInputOutputFunction(inputDynamicShapes, types.first, types.second);
     function = f.getOriginal();
+    if (!configuration.count("SNIPPETS_MODE")) {
+        configuration.insert({"SNIPPETS_MODE", "IGNORE_CALLBACK"});
+    }
 }
 
 TEST_P(Convert, CompareWithRefImpl) {

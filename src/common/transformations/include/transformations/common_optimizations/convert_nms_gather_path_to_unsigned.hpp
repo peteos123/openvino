@@ -1,11 +1,11 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <openvino/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
+#include "openvino/pass/graph_rewrite.hpp"
+#include "transformations_visibility.hpp"
 
 namespace ov {
 namespace pass {
@@ -16,7 +16,7 @@ class TRANSFORMATIONS_API ConvertNmsGatherPathToUnsigned;
 }  // namespace ov
 
 /**
- * @ingroup ie_transformation_common_api
+ * @ingroup ov_transformation_common_api
  * @brief Converts Gather indices to unsigned if indices are from NMS selected indices output.
  * NMS returns -1 for not selected boxes, old version of Gather fill corresponding
  * output for such indices with zero.
@@ -27,12 +27,6 @@ class TRANSFORMATIONS_API ConvertNmsGatherPathToUnsigned;
  */
 class ov::pass::ConvertNmsGatherPathToUnsigned : public ov::pass::GraphRewrite {
 public:
-    OPENVINO_RTTI("ConvertNmsGatherPathToUnsigned", "0");
+    OPENVINO_GRAPH_REWRITE_RTTI("ConvertNmsGatherPathToUnsigned");
     ConvertNmsGatherPathToUnsigned();
 };
-
-namespace ngraph {
-namespace pass {
-using ov::pass::ConvertNmsGatherPathToUnsigned;
-}  // namespace pass
-}  // namespace ngraph

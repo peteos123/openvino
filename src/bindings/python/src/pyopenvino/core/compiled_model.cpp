@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -9,12 +9,8 @@
 
 #include "common.hpp"
 #include "pyopenvino/core/compiled_model.hpp"
-#include "pyopenvino/core/containers.hpp"
 #include "pyopenvino/core/infer_request.hpp"
 #include "pyopenvino/utils/utils.hpp"
-
-PYBIND11_MAKE_OPAQUE(Containers::TensorIndexMap);
-PYBIND11_MAKE_OPAQUE(Containers::TensorNameMap);
 
 namespace py = pybind11;
 
@@ -32,9 +28,13 @@ void regclass_CompiledModel(py::module m) {
         "create_infer_request",
         [](ov::CompiledModel& self) {
             // Create temporary ov::InferRequest and move it to actual wrapper class.
-            return std::make_shared<InferRequestWrapper>(self.create_infer_request(), self.inputs(), self.outputs());
+            ov::InferRequest request;
+            {
+                py::gil_scoped_release release;
+                request = self.create_infer_request();
+            }
+            return std::make_shared<InferRequestWrapper>(std::move(request), self.inputs(), self.outputs());
         },
-        py::call_guard<py::gil_scoped_release>(),
         R"(
             Creates an inference request object used to infer the compiled model.
             The created request has allocated input and output tensors.
@@ -47,10 +47,12 @@ void regclass_CompiledModel(py::module m) {
         "export_model",
         [](ov::CompiledModel& self) {
             std::stringstream _stream;
-            self.export_model(_stream);
+            {
+                py::gil_scoped_release release;
+                self.export_model(_stream);
+            }
             return py::bytes(_stream.str());
         },
-        py::call_guard<py::gil_scoped_release>(),
         R"(
             Exports the compiled model to bytes/output stream.
 
@@ -135,7 +137,7 @@ void regclass_CompiledModel(py::module m) {
     cls.def(
         "set_property",
         [](ov::CompiledModel& self, const std::pair<std::string, py::object>& property) {
-            ov::AnyMap _properties{{property.first, py_object_to_any(property.second)}};
+            ov::AnyMap _properties{{property.first, Common::utils::py_object_to_any(property.second)}};
             self.set_property(_properties);
         },
         py::arg("property"),
@@ -175,6 +177,16 @@ void regclass_CompiledModel(py::module m) {
                 :rtype: openvino.runtime.Model
             )");
 
+    cls.def("release_memory",
+            &ov::CompiledModel::release_memory,
+            py::call_guard<py::gil_scoped_release>(),
+            R"(
+                Release intermediate memory.
+
+                This method forces the Compiled model to release memory allocated for intermediate structures,
+                e.g. caches, tensors, temporal buffers etc., when possible
+            )");
+
     cls.def_property_readonly("inputs",
                               &ov::CompiledModel::inputs,
                               R"(
@@ -185,7 +197,7 @@ void regclass_CompiledModel(py::module m) {
                               )");
 
     cls.def("input",
-            (ov::Output<const ov::Node>(ov::CompiledModel::*)() const) & ov::CompiledModel::input,
+            (const ov::Output<const ov::Node>& (ov::CompiledModel::*)() const) & ov::CompiledModel::input,
             R"(
                 Gets a single input of a compiled model.
                 If a model has more than one input, this method throws an exception.
@@ -195,7 +207,7 @@ void regclass_CompiledModel(py::module m) {
             )");
 
     cls.def("input",
-            (ov::Output<const ov::Node>(ov::CompiledModel::*)(size_t) const) & ov::CompiledModel::input,
+            (const ov::Output<const ov::Node>& (ov::CompiledModel::*)(size_t) const) & ov::CompiledModel::input,
             py::arg("index"),
             R"(
                 Gets input of a compiled model identified by an index.
@@ -207,10 +219,11 @@ void regclass_CompiledModel(py::module m) {
                 :rtype: openvino.runtime.ConstOutput
             )");
 
-    cls.def("input",
-            (ov::Output<const ov::Node>(ov::CompiledModel::*)(const std::string&) const) & ov::CompiledModel::input,
-            py::arg("tensor_name"),
-            R"(
+    cls.def(
+        "input",
+        (const ov::Output<const ov::Node>& (ov::CompiledModel::*)(const std::string&) const) & ov::CompiledModel::input,
+        py::arg("tensor_name"),
+        R"(
                 Gets input of a compiled model identified by a tensor_name.
                 If the input with given tensor name is not found, this method throws an exception.
 
@@ -230,7 +243,7 @@ void regclass_CompiledModel(py::module m) {
                               )");
 
     cls.def("output",
-            (ov::Output<const ov::Node>(ov::CompiledModel::*)() const) & ov::CompiledModel::output,
+            (const ov::Output<const ov::Node>& (ov::CompiledModel::*)() const) & ov::CompiledModel::output,
             R"(
                 Gets a single output of a compiled model.
                 If the model has more than one output, this method throws an exception.
@@ -240,7 +253,7 @@ void regclass_CompiledModel(py::module m) {
             )");
 
     cls.def("output",
-            (ov::Output<const ov::Node>(ov::CompiledModel::*)(size_t) const) & ov::CompiledModel::output,
+            (const ov::Output<const ov::Node>& (ov::CompiledModel::*)(size_t) const) & ov::CompiledModel::output,
             py::arg("index"),
             R"(
                 Gets output of a compiled model identified by an index.
@@ -253,7 +266,8 @@ void regclass_CompiledModel(py::module m) {
             )");
 
     cls.def("output",
-            (ov::Output<const ov::Node>(ov::CompiledModel::*)(const std::string&) const) & ov::CompiledModel::output,
+            (const ov::Output<const ov::Node>& (ov::CompiledModel::*)(const std::string&) const) &
+                ov::CompiledModel::output,
             py::arg("tensor_name"),
             R"(
                 Gets output of a compiled model identified by a tensor_name.
@@ -269,6 +283,7 @@ void regclass_CompiledModel(py::module m) {
         auto inputs_str = Common::docs::container_to_string(self.inputs(), ",\n");
         auto outputs_str = Common::docs::container_to_string(self.outputs(), ",\n");
 
-        return "<CompiledModel:\ninputs[\n" + inputs_str + "\n]\noutputs[\n" + outputs_str + "\n]>";
+        return "<" + Common::get_class_name(self) + ":\ninputs[\n" + inputs_str + "\n]\noutputs[\n" + outputs_str +
+               "\n]>";
     });
 }

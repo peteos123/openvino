@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -11,9 +11,18 @@
 #include <sstream>
 #include <string>
 
+#include "pyopenvino/core/common.hpp"
 #include "pyopenvino/graph/strides.hpp"
 
 namespace py = pybind11;
+
+template <typename T>
+bool compare_strides(const ov::Strides& a, const T& b) {
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(), [](const size_t& elem_a, const py::handle& elem_b) {
+               return elem_a == elem_b.cast<size_t>();
+           });
+}
 
 void regclass_graph_Strides(py::module m) {
     py::class_<ov::Strides, std::shared_ptr<ov::Strides>> strides(m, "Strides");
@@ -24,13 +33,13 @@ void regclass_graph_Strides(py::module m) {
 
     strides.def("__str__", [](const ov::Strides& self) -> std::string {
         std::stringstream stringstream;
-        std::copy(self.begin(), self.end(), std::ostream_iterator<int>(stringstream, ", "));
+        std::copy(self.begin(), self.end(), std::ostream_iterator<size_t>(stringstream, ", "));
         std::string string = stringstream.str();
         return string.substr(0, string.size() - 2);
     });
 
     strides.def("__repr__", [](const ov::Strides& self) -> std::string {
-        std::string class_name = py::cast(self).get_type().attr("__name__").cast<std::string>();
+        std::string class_name = Common::get_class_name(self);
         std::string shape_str = py::cast(self).attr("__str__")().cast<std::string>();
         return "<" + class_name + ": (" + shape_str + ")>";
     });
@@ -46,6 +55,27 @@ void regclass_graph_Strides(py::module m) {
     strides.def("__len__", [](const ov::Strides& self) {
         return self.size();
     });
+
+    strides.def(
+        "__eq__",
+        [](const ov::Strides& a, const ov::Strides& b) {
+            return a == b;
+        },
+        py::is_operator());
+
+    strides.def(
+        "__eq__",
+        [](const ov::Strides& a, const py::tuple& b) {
+            return compare_strides<py::tuple>(a, b);
+        },
+        py::is_operator());
+
+    strides.def(
+        "__eq__",
+        [](const ov::Strides& a, const py::list& b) {
+            return compare_strides<py::list>(a, b);
+        },
+        py::is_operator());
 
     strides.def(
         "__iter__",

@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -7,16 +7,15 @@
 #include <memory>
 #include <string>
 
-#include <ngraph/node.hpp>
-#include <ngraph/variant.hpp>
+#include "openvino/core/node.hpp"
 
 #include "low_precision/rt_info/shared_value_attribute.hpp"
 #include "low_precision/rt_info/attribute_parameters.hpp"
 #include "low_precision/lpt_visibility.hpp"
 
-namespace ngraph {
+namespace ov {
 /**
- * @ingroup ie_transformation_common_api
+ * @ingroup ov_transformation_common_api
  * @brief IntervalsAlignmentSharedValue is used by IntervalsAlignmentAttribute as attribute shared value.
  */
 class LP_TRANSFORMATIONS_API IntervalsAlignmentSharedValue {
@@ -50,16 +49,16 @@ public:
 };
 
 /**
- * @ingroup ie_transformation_common_api
+ * @ingroup ov_transformation_common_api
  * @brief IntervalsAlignmentAttribute defines subgraph with the same quantization intervals alignment.
  * FakeQuantize operations are included. The attribute is used by quantization operations.
  *
  * For more details about the attribute, refer to
- * [IntervalsAlignmentAttribute](@ref openvino_docs_OV_UG_lpt_IntervalsAlignment) page in the Inference Engine Developer Guide.
+ * [IntervalsAlignmentAttribute](@ref openvino_docs_OV_UG_lpt_IntervalsAlignment) page in the OpenVINO Developer Guide.
  */
 class LP_TRANSFORMATIONS_API IntervalsAlignmentAttribute : public SharedAttribute<IntervalsAlignmentSharedValue> {
 public:
-    OPENVINO_RTTI("LowPrecision::IntervalsAlignment", "", ov::RuntimeAttribute, 0);
+    OPENVINO_RTTI("LowPrecision::IntervalsAlignment", "", ov::RuntimeAttribute);
     IntervalsAlignmentAttribute() = default;
     IntervalsAlignmentAttribute(IntervalsAlignmentSharedValue::Interval combinedInterval, size_t levels);
     IntervalsAlignmentAttribute(
@@ -69,13 +68,13 @@ public:
         const size_t minLevels);
 
     static ov::Any create(
-        const std::shared_ptr<ngraph::Node>& node,
+        const std::shared_ptr<ov::Node>& node,
         const AttributeParameters& params = AttributeParameters());
-    void merge(std::vector<ov::Any>& attributes);
+    void merge_attributes(std::vector<ov::Any>& attributes);
     std::string to_string() const override;
 
     // specify subgraph original levels
     size_t levels;
 };
 
-} // namespace ngraph
+} // namespace ov

@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -6,7 +6,6 @@
 #include "gather_elements_shape_inference.hpp"
 
 #include "primitive_type_base.h"
-#include "intel_gpu/runtime/error_handler.hpp"
 #include "json_object.h"
 #include <string>
 
@@ -22,7 +21,7 @@ layout gather_elements_inst::calc_output_layout(gather_elements_node const& node
     auto input_layout = input_layout_origin.get_tensor().sizes(input_layout_origin.format);
     auto indices_layout = indices_layout_origin.get_tensor().sizes(indices_layout_origin.format);
 
-    auto output_type = (impl_param.has_fused_primitives()) ? impl_param.get_fused_output_layout().data_type :
+    auto output_type = (impl_param.has_fused_primitives()) ? impl_param.get_output_element_type() :
                        input_layout_origin.data_type;
     auto output_shape = op->output_shape;
     auto output_format = op->output_format;
@@ -37,18 +36,17 @@ std::vector<layout> gather_elements_inst::calc_output_layouts(gather_elements_no
 
     auto output_type = input_layout.data_type;
     if (impl_param.has_fused_primitives()) {
-        output_type = impl_param.get_fused_output_layout().data_type;
+        output_type = impl_param.get_output_element_type();
     }
 
     ov::op::v6::GatherElements op;
     op.set_axis(desc->axis);
 
-    std::vector<ShapeType> output_shapes = {ShapeType()};
     std::vector<ShapeType> input_shapes = {
         impl_param.get_input_layout(0).get<ShapeType>(),
         impl_param.get_input_layout(1).get<ShapeType>()
     };
-    ov::op::v6::shape_infer(&op, input_shapes, output_shapes);
+    std::vector<ShapeType> output_shapes = ov::op::v6::shape_infer(&op, input_shapes);
 
     format output_format = format::adjust_to_rank(input_layout.format, output_shapes[0].size());
 

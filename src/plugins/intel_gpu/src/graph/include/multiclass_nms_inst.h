@@ -58,16 +58,18 @@ class typed_primitive_inst<multiclass_nms> : public typed_primitive_inst_base<mu
     using parent::parent;
 
 public:
+    template<typename ShapeType>
+    static std::vector<layout> calc_output_layouts(multiclass_nms_node const& /*node*/, const kernel_impl_params& impl_param);
     static layout calc_output_layout(const multiclass_nms_node& node, const kernel_impl_params& impl_param);
     static std::string to_string(const multiclass_nms_node& node);
 
     typed_primitive_inst(network& network, const multiclass_nms_node& node) : parent(network, node) {}
 
     memory::ptr output_indices_memory() const {
-        return dep_memory_ptr(node->get_dependencies().size() - 2);
+        return dep_memory_ptr(dependencies().size() - 2);
     }
     memory::ptr output_num_memory() const {
-        return dep_memory_ptr(node->get_dependencies().size() - 1);
+        return dep_memory_ptr(dependencies().size() - 1);
     }
 };
 

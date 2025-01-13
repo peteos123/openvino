@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -49,10 +49,18 @@ uint32_t GetNumberOfInputs(EltwiseMode m) {
         case EltwiseMode::LOGIC_XOR:
         case EltwiseMode::SQUARED_DIFF:
         case EltwiseMode::FLOOR_MOD:
+        case EltwiseMode::RIGHT_SHIFT:
+        case EltwiseMode::LEFT_SHIFT:
+        case EltwiseMode::BITWISE_AND:
+        case EltwiseMode::BITWISE_OR:
+        case EltwiseMode::BITWISE_XOR:
             return 2;
         case EltwiseMode::SQRT:
         case EltwiseMode::RSQRT:
         case EltwiseMode::ASSIGN:
+        case EltwiseMode::IS_FINITE:
+        case EltwiseMode::IS_INF:
+        case EltwiseMode::IS_NAN:
             return 1;
         default:
             return 0;
@@ -74,7 +82,20 @@ ParamsKey eltwise_params::GetParamsKey() const {
     return k;
 }
 
+static bool IsBitwiseMode(EltwiseMode mode) {
+    return mode == EltwiseMode::BITWISE_AND || mode == EltwiseMode::LEFT_SHIFT || mode == EltwiseMode::RIGHT_SHIFT ||
+           mode == EltwiseMode::BITWISE_OR || mode == EltwiseMode::BITWISE_XOR;
+}
+
 Datatype EltwiseKernelBase::GetAccumulatorType(const eltwise_params &params) const {
+    // NOTE: Workaround for not promoting shift operations. Not sure what should happen
+    // if shift op is just one operation of other elementwise operations. My guess is that is should be promoted as
+    // well, but in reality more robust solution will be needed or (better) - assumption that types are not promoted. So
+    // probably this is a temporary solution.
+    if (IsBitwiseMode(params.operations[0].mode)) {
+        return params.inputs[0].GetDType();
+    }
+
     if (params.int8_quantization)
         return Datatype::INT32;
 
@@ -88,8 +109,8 @@ Datatype EltwiseKernelBase::GetAccumulatorType(const eltwise_params &params) con
     return Datatype::F32;
 }
 
-bool EltwiseKernelBase::Validate(const Params& p, const optional_params& o) const {
-    if (p.GetType() != KernelType::ELTWISE || o.GetType() != KernelType::ELTWISE) {
+bool EltwiseKernelBase::Validate(const Params& p) const {
+    if (p.GetType() != KernelType::ELTWISE) {
         return false;
     }
 
@@ -146,6 +167,9 @@ bool EltwiseKernelBase::IsUnsupportedModeForVecCode(const eltwise_params& params
         EltwiseMode::LOGIC_OR,
         EltwiseMode::LOGIC_XOR,
         EltwiseMode::FLOOR_MOD,
+        EltwiseMode::IS_FINITE,
+        EltwiseMode::IS_INF,
+        EltwiseMode::IS_NAN,
     };
 
     for (size_t op_num = 0; op_num <  params.operations.size(); op_num++) {
@@ -297,6 +321,31 @@ JitConstants EltwiseKernelBase::GetOperationsJitConstants(const eltwise_params& 
             case EltwiseMode::ASSIGN:
                 op += input0_str;
                 break;
+            case EltwiseMode::IS_FINITE:
+                op += "(isfinite(" + input0_str + "))";
+                break;
+            case EltwiseMode::IS_INF:
+                op += "(isinf(" + input0_str + ") && (" + toCodeString(coefficients.at(0)) + " && signbit(" +
+                      input0_str + ") || " + toCodeString(coefficients.at(1)) + " && !signbit(" + input0_str + ")))";
+                break;
+            case EltwiseMode::IS_NAN:
+                op += "(isnan(" + input0_str + "))";
+                break;
+            case EltwiseMode::RIGHT_SHIFT:
+                op += "(" + input0_str + " >> " + input1_str + ")";
+                break;
+            case EltwiseMode::LEFT_SHIFT:
+                op += "(" + input0_str + " << " + input1_str + ")";
+                break;
+            case EltwiseMode::BITWISE_AND:
+                op += "(" + input0_str + " & " + input1_str + ")";
+                break;
+            case EltwiseMode::BITWISE_OR:
+                op += "(" + input0_str + " | " + input1_str + ")";
+                break;
+            case EltwiseMode::BITWISE_XOR:
+                op += "(" + input0_str + " ^ " + input1_str + ")";
+                break;
             default:
                 break;
         }
@@ -311,9 +360,13 @@ JitConstants EltwiseKernelBase::MakeLoadJitConstants(const eltwise_params& param
                                                      bool useVload8) const {
     JitConstants jit = {};
     std::string vload_decls;
+
     for (size_t op_num = 0; op_num < params.operations.size(); op_num++) {
         const std::string op_num_str = toCodeString(op_num);
         const auto &ew = params.operations[op_num];
+        bool is_dynamic_crop_kernel = params.is_shape_agnostic && params.operations[op_num].mode == EltwiseMode::ASSIGN;
+        if (is_dynamic_crop_kernel)
+            jit.AddConstant(MakeJitConstant("IS_DYNAMIC_CROP", 1));
         for (size_t input_idx = 0; input_idx < ew.inputs.size(); input_idx++) {
             const auto &input = ew.inputs[input_idx];
             const std::string name = "INPUT_" + op_num_str + "_" + toCodeString(input_idx);
@@ -330,7 +383,7 @@ JitConstants EltwiseKernelBase::MakeLoadJitConstants(const eltwise_params& param
                         jit.AddConstant(MakeJitConstant(name,
                                                         "input" + toCodeString(input.index) +
                                                         "[GET_INDEX(INPUT, " + toCodeString(input.index) +
-                                                        "," + idx_order + ")]"));
+                                                        "," + idx_order + ") " + (is_dynamic_crop_kernel ? "+ runtime_offset]" : "]")));
                     break;
                 case EltwiseInputMode::OUTPUT_BUFFER:
                     jit.AddConstant(MakeJitConstant(name, "output[GET_INDEX(OUTPUT,,OUTPUT_IDX_ORDER)]"));
@@ -437,12 +490,12 @@ JitConstants EltwiseKernelBase::MakeIndexJitConstants(const eltwise_params& para
                 jit.AddConstant(MakeJitConstant(out_idx_order, GetIdxOrderStringForLayout(params.outputs[0].GetLayout(),
                                                                                           params.layoutBased || params.broadcast,
                                                                                           {1, 1, 1})));
-            } else if (out_c == 5) {
-                jit.AddConstant(MakeJitConstant(out_idx_order, "d5,d4,d3,d2,d1"));
-            } else if (out_c == 6) {
-                jit.AddConstant(MakeJitConstant(out_idx_order, "d6,d5,d4,d3,d2,d1"));
             } else {
-                assert(0);
+                std::string idx_order;
+                for (size_t i = 0; i < out_c; i++) {
+                    idx_order += "d" + std::to_string(out_c - i) + ((i == (out_c - 1)) ? "" : ",");
+                }
+                jit.AddConstant(MakeJitConstant(out_idx_order, idx_order));
             }
         }
     }
@@ -496,6 +549,28 @@ JitConstants EltwiseKernelBase::MakeIndexJitConstants(const eltwise_params& para
                         jit.AddConstant(MakeJitConstant(idx_order, "d6,d5,d3,d2,d1"));
                     } else {
                         jit.AddConstant(MakeJitConstant(idx_order, "d6,d5,d4,d3,d2,d1"));
+                    }
+                } else if (out_c == 7) {
+                    if (in_c < 5) {
+                        jit.AddConstant(MakeJitConstant(idx_order, "d7,d6,d2,d1"));
+                    } else if (in_c == 5) {
+                        jit.AddConstant(MakeJitConstant(idx_order, "d7,d6,d3,d2,d1"));
+                    } else if (in_c == 6) {
+                        jit.AddConstant(MakeJitConstant(idx_order, "d7,d6,d4,d3,d2,d1"));
+                    } else {
+                        jit.AddConstant(MakeJitConstant(idx_order, "d7,d6,d5,d4,d3,d2,d1"));
+                    }
+                } else if (out_c == 8) {
+                    if (in_c < 5) {
+                        jit.AddConstant(MakeJitConstant(idx_order, "d8,d7,d2,d1"));
+                    } else if (in_c == 5) {
+                        jit.AddConstant(MakeJitConstant(idx_order, "d8,d7,d3,d2,d1"));
+                    } else if (in_c == 6) {
+                        jit.AddConstant(MakeJitConstant(idx_order, "d8,d7,d4,d3,d2,d1"));
+                    } else if (in_c == 7) {
+                        jit.AddConstant(MakeJitConstant(idx_order, "d8,d7,d5,d4,d3,d2,d1"));
+                    } else {
+                        jit.AddConstant(MakeJitConstant(idx_order, "d8,d7,d6,d5,d4,d3,d2,d1"));
                     }
                 } else {
                     assert(0);
@@ -581,7 +656,13 @@ EltwiseKernelBase::DispatchData EltwiseKernelBase::SetDefault(const eltwise_para
         }
 
         dispatchData.gws[0] = gws[0];
-        if (n_dims == 6) {
+        if (n_dims == 8) {
+            dispatchData.gws[1] = gws[1] * gws[2] * gws[3] * gws[4] * gws[5];  // y*z*w*u*v
+            dispatchData.gws[2] = gws[6] * gws[7];
+        } else if (n_dims == 7) {
+            dispatchData.gws[1] = gws[1] * gws[2] * gws[3] * gws[4];  // y*z*w*u
+            dispatchData.gws[2] = gws[5] * gws[6];
+        } else if (n_dims == 6) {
             dispatchData.gws[1] = gws[1] * gws[2] * gws[3];  // y*z*w
             dispatchData.gws[2] = gws[4] * gws[5];
         } else if (n_dims == 5) {
@@ -676,25 +757,30 @@ EltwiseKernelBase::DispatchData EltwiseKernelBase::SetDefault(const eltwise_para
     return dispatchData;
 }
 
-KernelsData EltwiseKernelBase::GetCommonKernelsData(const Params& params, const optional_params& options) const {
-    if (!Validate(params, options)) {
-        return {};
-    }
-
-    KernelData kd = KernelData::Default<eltwise_params>(params);
-    eltwise_params& newParams = *static_cast<eltwise_params*>(kd.params.get());
-
-    auto entry_point = GetEntryPoint(kernelName, newParams.layerID, params, options);
-    auto cldnn_jit = GetJitConstants(newParams);
-    auto jit = CreateJit(kernelName, cldnn_jit, entry_point);
-
+void EltwiseKernelBase::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [this](const Params& params, KernelData& kd) {
         const auto& prim_params = static_cast<const eltwise_params&>(params);
         auto dispatchData = SetDefault(prim_params);
         OPENVINO_ASSERT(kd.kernels.size() == 1, "[GPU] Invalid kernels size for update dispatch data func");
         kd.kernels[0].params.workGroups.global = dispatchData.gws;
         kd.kernels[0].params.workGroups.local = dispatchData.lws;
+        kd.kernels[0].skip_execution = KernelData::SkipKernelExecution(prim_params);
     };
+}
+
+KernelsData EltwiseKernelBase::GetCommonKernelsData(const Params& params) const {
+    if (!Validate(params)) {
+        return {};
+    }
+
+    KernelData kd = KernelData::Default<eltwise_params>(params);
+    eltwise_params& newParams = *static_cast<eltwise_params*>(kd.params.get());
+
+    auto entry_point = GetEntryPoint(kernelName, newParams.layerID, params);
+    auto cldnn_jit = GetJitConstants(newParams);
+    auto jit = CreateJit(kernelName, cldnn_jit, entry_point);
+
+    GetUpdateDispatchDataFunc(kd);
 
     DispatchData dispatchData = SetDefault(newParams);
 
@@ -704,14 +790,20 @@ KernelsData EltwiseKernelBase::GetCommonKernelsData(const Params& params, const 
 
     kernel.params.workGroups.global = dispatchData.gws;
     kernel.params.workGroups.local = dispatchData.lws;
-    bool is_dynamic = newParams.has_dynamic_tensors();
+    bool is_dynamic = newParams.is_shape_agnostic;
     kernel.params.arguments = GetArgsDesc((uint32_t)newParams.inputs.size(),
                                    false,
                                    false,
                                    GetFusedPrimitiveInputsCount(params),
                                    1,
                                    is_dynamic);
-
+    if (params.is_shape_agnostic && newParams.operations[0].mode == EltwiseMode::ASSIGN) {
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0});
+        kernel_selector::ScalarDescriptor s;
+        s.t = kernel_selector::ScalarDescriptor::Types::UINT32;
+        s.v.u32 = 0;
+        kernel.params.scalars.push_back(s);
+    }
     return {kd};
 }
 }  // namespace kernel_selector

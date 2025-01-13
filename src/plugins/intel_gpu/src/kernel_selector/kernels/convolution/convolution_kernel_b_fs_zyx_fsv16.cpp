@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -89,8 +89,8 @@ ParamsKey ConvolutionKernel_b_fs_zyx_fsv16::GetSupportedKey() const {
     return k;
 }
 
-DeviceFeaturesKey ConvolutionKernel_b_fs_zyx_fsv16::get_required_device_features_key(const Params& params, const optional_params& options) const {
-    auto k = get_common_subgroups_device_features_key(params, options);
+DeviceFeaturesKey ConvolutionKernel_b_fs_zyx_fsv16::get_required_device_features_key(const Params& params) const {
+    auto k = get_common_subgroups_device_features_key(params);
     k.requires_subgroup_shuffle();
 
     return k;
@@ -188,14 +188,14 @@ ConvolutionKernelBase::DispatchData ConvolutionKernel_b_fs_zyx_fsv16::SetDefault
     return dispatchData;
 }
 
-KernelsPriority ConvolutionKernel_b_fs_zyx_fsv16::GetKernelsPriority(const Params& params, const optional_params& /*options*/) const {
+KernelsPriority ConvolutionKernel_b_fs_zyx_fsv16::GetKernelsPriority(const Params& params) const {
     const auto& p = static_cast<const convolution_params&>(params);
 
     return p.outputs[0].Batch().v == 1 ? FORCE_PRIORITY_2 : FORCE_PRIORITY_7;
 }
 
-bool ConvolutionKernel_b_fs_zyx_fsv16::Validate(const Params& p, const optional_params& o) const {
-    if (!ConvolutionKernelBase::Validate(p, o) || !ConvolutionCheckInput(p, o)) {
+bool ConvolutionKernel_b_fs_zyx_fsv16::Validate(const Params& p) const {
+    if (!ConvolutionKernelBase::Validate(p) || !ConvolutionCheckInput(p)) {
         return false;
     }
 
@@ -221,6 +221,17 @@ bool ConvolutionKernel_b_fs_zyx_fsv16::Validate(const Params& p, const optional_
     // Check that padding before features doesn't miss-align the blocks
     if (input.Feature().pad.before % feature_block_size != 0 || output.Feature().pad.before % feature_block_size != 0) {
         return false;
+    }
+
+    // Check if operation fusion is supported
+    if (!params.fused_ops.empty()) {
+        const bool is_1stconv = input.Feature().v == 3 && input.GetLayout() == DataLayout::bfzyx;
+        const bool ver_16mb16c = !is_1stconv && ((output.GetDType() == Datatype::F16 && output.Batch().v % 32 == 0) ||
+                                                (output.GetDType() == Datatype::F32 && output.Batch().v % 16 == 0));
+
+        if (!ver_16mb16c && is_1stconv && output.GetDType() == Datatype::F16) {
+            return false;
+        }
     }
 
     return true;
@@ -310,7 +321,7 @@ JitConstants ConvolutionKernel_b_fs_zyx_fsv16::GetJitConstants(const convolution
             jit.Merge(MakeFusedOpsJitConstants(params, {conf_vec0, conf_vec1, conf_vec2, conf_vec3,
                                                         conf_scalar0, conf_scalar1, conf_scalar2, conf_scalar3}));
         }
-    } else if (!is_1stconv && !params.fused_ops.empty()) {
+    } else if ((!is_1stconv || output.GetDType() == Datatype::F32) && !params.fused_ops.empty()) {
         FusedOpsConfiguration conf_vec0 = GenerateFusedOpsConfiguration_f16(0, "blockC0", input_dt, true);
         FusedOpsConfiguration conf_vec1 = GenerateFusedOpsConfiguration_f16(1, "blockC0", input_dt, true);
         FusedOpsConfiguration conf_scalar0 = GenerateFusedOpsConfiguration_f16(0, "blockC0", input_dt, false);
@@ -383,7 +394,7 @@ JitConstants ConvolutionKernel_b_fs_zyx_fsv16::GetJitConstants(const convolution
     return jit;
 }
 
-KernelsData ConvolutionKernel_b_fs_zyx_fsv16::GetKernelsData(const Params& params, const optional_params& options) const {
-    return GetTunedKernelsDataByIndex(params, options);
+KernelsData ConvolutionKernel_b_fs_zyx_fsv16::GetKernelsData(const Params& params) const {
+    return GetTunedKernelsDataByIndex(params);
 }
 }  // namespace kernel_selector

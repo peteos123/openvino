@@ -4,11 +4,11 @@
 
 #pragma once
 
-#include <openvino/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
+#include "openvino/pass/matcher_pass.hpp"
+#include "transformations_visibility.hpp"
 
 /**
- * @ingroup ie_transformation_common_api
+ * @ingroup ov_transformation_common_api
  * @brief transformation aligns elementwise constant inputs ranks with its output rank
  */
 
@@ -17,15 +17,9 @@ namespace pass {
 
 class TRANSFORMATIONS_API AlignEltwiseInputRanks : public MatcherPass {
 public:
-    OPENVINO_RTTI("TRANSFORMATIONS_API", "0");
+    OPENVINO_MATCHER_PASS_RTTI("AlignEltwiseInputRanks");
     AlignEltwiseInputRanks();
 };
 
 }  // namespace pass
 }  // namespace ov
-
-namespace ngraph {
-namespace pass {
-using ov::pass::AlignEltwiseInputRanks;
-}  // namespace pass
-}  // namespace ngraph

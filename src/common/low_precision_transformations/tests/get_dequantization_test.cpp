@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -6,18 +6,18 @@
 
 #include <sstream>
 #include <string>
-#include <transformations/init_node_info.hpp>
+#include "transformations/init_node_info.hpp"
 
-#include "common_test_utils/ngraph_test_utils.hpp"
+#include "common_test_utils/ov_test_utils.hpp"
 #include "layer_transformation.hpp"
 #include "low_precision/network_helper.hpp"
-#include "lpt_ngraph_functions/common/dequantization_operations.hpp"
-#include "lpt_ngraph_functions/get_dequantization_function.hpp"
+#include "ov_lpt_models/common/dequantization_operations.hpp"
+#include "ov_lpt_models/get_dequantization.hpp"
 
 namespace {
 using namespace testing;
-using namespace ngraph;
-using namespace ngraph::pass;
+using namespace ov;
+using namespace ov::pass;
 
 typedef std::tuple<bool,    // isConvert
                    bool,    // isSubtract
@@ -36,13 +36,13 @@ public:
         size_t mulDataInput;
         std::tie(isConvert, isSubtract, subDataInput, mulDataInput) = this->GetParam();
 
-        actualFunction = ngraph::builder::subgraph::GetDequantizationFunction::getOriginal(isConvert,
+        actualFunction = ov::builder::subgraph::GetDequantizationFunction::getOriginal(isConvert,
                                                                                            isSubtract,
                                                                                            subDataInput,
                                                                                            mulDataInput);
         auto dequantization =
-            ngraph::pass::low_precision::NetworkHelper::getDequantization(actualFunction->get_result());
-        referenceFunction = ngraph::builder::subgraph::GetDequantizationFunction::getReference(dequantization);
+            ov::pass::low_precision::NetworkHelper::getDequantization(actualFunction->get_result());
+        referenceFunction = ov::builder::subgraph::GetDequantizationFunction::getReference(dequantization);
     }
 
     static std::string getTestCaseName(testing::TestParamInfo<GetDequantizationTestValues> obj) {
@@ -69,7 +69,7 @@ std::vector<size_t> subDataInput = {0ul, 1ul};
 std::vector<size_t> mulDataInput = {0ul, 1ul};
 
 TEST_P(GetDequantizationTestTransformation, CompareFunctions) {
-    InitNodeInfo().run_on_model(actualFunction);
+    ov::pass::InitNodeInfo().run_on_model(actualFunction);
     actualFunction->validate_nodes_and_infer_types();
 
     auto res = compare_functions(actualFunction, referenceFunction, true);

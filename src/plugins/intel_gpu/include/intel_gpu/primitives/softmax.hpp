@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -18,15 +18,16 @@ namespace cldnn {
 struct softmax : public primitive_base<softmax> {
     CLDNN_DECLARE_PRIMITIVE(softmax)
 
+    softmax() : primitive_base("", {}) {}
+
     /// @brief Constructs softmax primitive.
     /// @param id This primitive id.
     /// @param input Input primitive id.
     /// @param dimension Defines a scope of normalization
     softmax(const primitive_id& id,
             const input_info& input,
-            const int64_t dimension = 1,
-            const padding& output_padding = padding())
-        : primitive_base(id, {input}, {output_padding}), dimension(dimension) {}
+            const int64_t dimension = 1)
+        : primitive_base(id, {input}), dimension(dimension) {}
 
     /// @brief Defines a scope of a single softmax normalization.
     /// @details
@@ -37,6 +38,31 @@ struct softmax : public primitive_base<softmax> {
     /// - when softmax dimension is set to 2 (y dim) each input column is normalized independently,
     /// - when softmax dimension is set to 3 (x dim) each input row is normalized independently.
 
-    int64_t dimension;
+    int64_t dimension = 1;
+
+    size_t hash() const override {
+        size_t seed = primitive::hash();
+        seed = hash_combine(seed, dimension);
+        return seed;
+    }
+
+    bool operator==(const primitive& rhs) const override {
+        if (!compare_common_params(rhs))
+            return false;
+
+        auto rhs_casted = downcast<const softmax>(rhs);
+
+        return dimension == rhs_casted.dimension;
+    }
+
+    void save(BinaryOutputBuffer& ob) const override {
+        primitive_base<softmax>::save(ob);
+        ob << dimension;
+    }
+
+    void load(BinaryInputBuffer& ib) override {
+        primitive_base<softmax>::load(ib);
+        ib >> dimension;
+    }
 };
 }  // namespace cldnn

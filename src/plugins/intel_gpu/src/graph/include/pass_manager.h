@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -6,20 +6,16 @@
 
 #include "intel_gpu/graph/program.hpp"
 #include "layout_optimizer.h"
-#include "split_inst.h"
-#include "lstm_inst.h"
-#include "lstm_dynamic_inst.h"
 #include "quantize_inst.h"
 #include "eltwise_inst.h"
 #include "convolution_inst.h"
-#include "permute_inst.h"
+#include "read_value_inst.h"
 #include <string>
 #include <vector>
 #include <memory>
 #include <list>
 #include <utility>
 #include <set>
-#include <functional>
 
 #include <fstream>
 
@@ -57,23 +53,8 @@ public:
 
 private:
     void run(program& p) override;
-    void add_reorder(program& p, program_node* node, program_node* usr);
-};
-
-class add_reshape_to_primitives : public base_pass {
-public:
-    add_reshape_to_primitives() : base_pass("add_reshape_to_primitives_pass") {}
-
-private:
-    void run(program& p) override;
-};
-
-class calculate_prior_boxes : public base_pass {
-public:
-    calculate_prior_boxes() : base_pass("calculated_prior_boxes") {}
-
-private:
-    void run(program& p) override;
+    void add_reorder(program& p, program_node* node, program_node* usr, bool keep_original_dt = false);
+    bool test_format(cldnn::program_node& node, format requested_format);
 };
 
 class compile_graph : public base_pass {
@@ -84,32 +65,12 @@ private:
     void run(program& p) override;
 };
 
-class eltwise_shrinking : public base_pass {
-public:
-    eltwise_shrinking() : base_pass("eltwise_shrinking") {}
-
-private:
-    void run(program& p) override;
-};
-
-class eltwise_remove_stride : public base_pass {
-public:
-    eltwise_remove_stride() : base_pass("eltwise_remove_stride") {}
-
-private:
-    void run(program& p) override;
-    void conv_stride_extend(program& p, program_node& node, cldnn::tensor& tensor);
-};
-
 class graph_initializations : public base_pass {
 public:
     graph_initializations() : base_pass("init") {}
 
 private:
     void run(program& p) override;
-    void handle_split_node(program& p, split_node& node);
-    void handle_lstm_node(program& p, lstm_node& node);
-    void handle_dynamic_lstm_node(program& p, lstm_dynamic_node& node);
     void set_outputs(program& p);
 };
 
@@ -121,20 +82,38 @@ private:
     void run(program& p) override;
 };
 
-class handle_input_padding : public base_pass {
-public:
-    handle_input_padding() : base_pass("handle_input_padding") {}
-
-private:
-    void run(program& p) override;
-};
-
 class mark_nodes : public base_pass {
 public:
     mark_nodes() : base_pass("analyzed_graph") {}
 
 private:
     void run(program& p) override;
+};
+
+class mark_state_init_subgraphs : public base_pass {
+    // This optimization pass aggregates nodes into state initializer subgraphs
+public:
+    mark_state_init_subgraphs() : base_pass("mark_state_init_subgraphs") {}
+
+private:
+    void run(program& p) override;
+    void mark_init_subgraph(program& p, read_value_node& node);
+};
+
+class mark_shape_of_subgraphs : public base_pass {
+    // This optimization pass aggregates nodes into shape_of subgraphs for further optimizations.
+    // There are few key requirements to decide if node belongs to shape_of subgraph or not:
+    // - Node type is shape_of OR
+    // - All node's dependencies are marked as members of shape_of subgraphs OR
+    // - Node is a shape infer dependency of any user
+public:
+    mark_shape_of_subgraphs() : base_pass("mark_shape_of_subgraphs") {}
+
+private:
+    void run(program& p) override;
+    void look_for_shape_of_subgraph(program_node& node);
+    bool can_mark_node(const program_node& node);
+    void mark_node(program_node& node);
 };
 
 class prepare_buffer_fusing : public base_pass {
@@ -152,36 +131,13 @@ public:
 private:
     void run(program& p) override;
     void handle_quantize_node(program& p, quantize_node& quantize_node);
-    void prepare_packed_quantize(program& p, quantize_node& quantize_node);
     void prepare_dequantize_merge(program& p, eltwise_node& eltwise_node);
     void remove_fake_reorders(program& p, reorder_node& reorder_node);
-    void prepare_asymmetric_quantization(program& p, convolution_node& convolution_node);
     void prepare_scale_shift_opt(program &p, quantize_node& quantize_node);
     bool optimize_quantize(program &p, quantize_node& quantize_node);
 };
 
-class prepare_conv_eltw_fusing : public base_pass {
-public:
-    explicit prepare_conv_eltw_fusing(layout_optimizer& lo_ref, bool b_fs_yx_fsv16_opt = false) :
-        base_pass("prepare_conv_eltw_fusing"), _lo(lo_ref), b_fs_yx_fsv16_opt(b_fs_yx_fsv16_opt) {}
-
-private:
-    void run(program& p) override;
-    void fuse_conv_eltwise(program& p, program_node* node);
-    void fuse_conv_depth_to_space(program& p, program_node* node);
-    layout_optimizer& _lo;
-    bool b_fs_yx_fsv16_opt;
-};
-
-class prepare_conv_eltw_read_write_opt : public base_pass {
-public:
-    prepare_conv_eltw_read_write_opt() : base_pass("prepare_conv_eltw_read_write_opt") {}
-
-private:
-    void run(program& p) override;
-    void conv_eltwise_read_write_opt(program& p, program_node* node);
-};
-
+// TODO: Remove this pass once no unexpected reshapes/reorders are added during ov::Model -> cldnn::topology conversion
 class prepare_primitive_fusing_through : public base_pass {
 public:
     prepare_primitive_fusing_through() : base_pass("prepare_primitive_fusing_through") {}
@@ -190,48 +146,33 @@ public:
 
 class prepare_primitive_fusing : public base_pass {
 public:
-    explicit prepare_primitive_fusing(layout_optimizer& lo_ref) :
-        base_pass("prepare_primitive_fusing"), _lo(lo_ref) {}
+    explicit prepare_primitive_fusing() : base_pass("prepare_primitive_fusing") {}
 
 private:
     void run(program& p) override;
-    void fuse_sigmoid_mul_to_swish(program &p);
     void fuse_bias(program &p);
+    void fuse_swiglu(program &p);
     void fuse_reorders(program& p);
-    void fuse_activations(program& p);
     void fuse_simple_primitives(program &p);
+    void fuse_constant_transposes(program &p);
     void optimize_fused_ops(program &p);
     void remove_redundant_reshape(program &p);
-    layout_optimizer& _lo;
 };
 
 class pre_replace_deconv : public base_pass {
 public:
-    explicit pre_replace_deconv(layout_optimizer& lo_ref) :
-        base_pass("pre_replace_deconv"), _lo(lo_ref) {}
+    explicit pre_replace_deconv() :
+        base_pass("pre_replace_deconv") {}
 
 private:
     void run(program& p) override;
-    layout_optimizer& _lo;
-};
-
-class pre_optimize_bias : public base_pass {
-public:
-    explicit pre_optimize_bias(reorder_factory& rf_ref);
-
-private:
-    void run(program& p) override;
-    virtual void run(program& p, reorder_factory& rf);
-    template <typename T>
-    bool optimize_bias(T& node, reorder_factory& rf, program& p);
-    reorder_factory& _rf;
 };
 
 class prepare_padding : public base_pass {
 public:
     explicit prepare_padding(bool output_size_handling_enabled_switch)
         : base_pass("prepare_padding"), output_size_handling_enabled(output_size_handling_enabled_switch) {}
-
+    static cldnn::padding get_needed_padding_for_convolution(convolution_node& node);
 private:
     void run(program& p) override;
     bool output_size_handling_enabled;
@@ -267,6 +208,11 @@ private:
     weights_bias_offset get_weights_bias_offset(const T& node);
     template<typename T>
     void optimize_weights(T& node, program& p);
+    void select_implementation(program& p, program_node& node);
+    void add_lstm_weights_reorder(primitive_id input_id, std::shared_ptr<WeightsReorderParams> reorder_params, program& p, cldnn::program_node&, \
+                                  cldnn::program_node&, size_t);
+    void add_lstm_bias_reorder(primitive_id input_id, std::shared_ptr<WeightsReorderParams> reorder_params, program& p, cldnn::program_node&, \
+                               cldnn::program_node&);
     reorder_factory& _rf;
 };
 
@@ -276,7 +222,10 @@ public:
 
 private:
     void run(program& p) override;
-    std::list<std::pair<primitive_id, memory::ptr>> calculate(engine& engine, build_options bo);
+    std::list<std::tuple<primitive_id, memory::ptr, std::shared_ptr<weightless_cache_manager>, std::shared_ptr<layout>>>
+    calculate(engine& engine,
+              const ExecutionConfig& config,
+              std::shared_ptr<ov::threading::IStreamsExecutor> task_executor);
     bool has_non_const_user(program_node& node) const;
     void handle_constant(program& prog, program_node& node);
     void add_constant(program& prog, program_node& node);
@@ -290,12 +239,11 @@ private:
 
 class remove_redundant_reorders : public base_pass {
 public:
-    explicit remove_redundant_reorders(layout_optimizer& lo_ref, bool enable_reorder_fusing = false, bool update_implementations = false,
+    explicit remove_redundant_reorders(bool enable_reorder_fusing = false, bool update_implementations = false,
         bool remove_output_reorders = false);
     void run(program& p) override;
 
 private:
-    layout_optimizer& lo;
     bool enable_reorder_fusing;
     bool update_implementations;
     bool remove_output_reorders;
@@ -303,23 +251,20 @@ private:
 
 class reorder_inputs : public base_pass {
 public:
-    reorder_inputs(layout_optimizer& lo_ref, reorder_factory& rf_ref);
+    reorder_inputs(reorder_factory& rf_ref);
 
 private:
     void run(program& p) override;
-    virtual void run(program& p, layout_optimizer& lo, reorder_factory& rf);
-    layout_optimizer& _lo;
+    virtual void run(program& p, reorder_factory& rf);
     reorder_factory& _rf;
 };
 
 class select_preferred_formats : public base_pass {
 public:
-    explicit select_preferred_formats(layout_optimizer& lo_ref) :
-        base_pass("select_preferred_formats"), _lo(lo_ref) {}
+    explicit select_preferred_formats() : base_pass("select_preferred_formats") {}
 
 private:
     void run(program& p) override;
-    layout_optimizer& _lo;
 };
 
 class trim_to_outputs : public base_pass {
@@ -327,18 +272,6 @@ public:
     trim_to_outputs() : base_pass("trimmed") {}
 
 private:
-    void run(program& p) override;
-};
-
-class strided_slice_optimize : public base_pass {
-public:
-    strided_slice_optimize() : base_pass("strided_slice_optimize") {}
-    void run(program& p) override;
-};
-
-class reverse_optional_nodes_outputs : public base_pass {
-public:
-    reverse_optional_nodes_outputs() : base_pass("reverse_optional_nodes_outputs") {}
     void run(program& p) override;
 };
 
@@ -367,14 +300,31 @@ public:
 class memory_dependency_pass : public base_pass {
 public:
     explicit memory_dependency_pass(const std::string& pass_name) : base_pass(pass_name) {}
+
+    // Program node with can_be_optimized true could also allocate from memory pool during runtime, if it cannot be
+    // optimized out (with inst_impl.can_be_optimized false).
+    // If it is optimized out, alternatively, it could reuse the memory from its parent (e.g. reshape) or chilren (e.g. concat).
+    // The memory dependency pass need consider both situations, by iteratively referencing to all nodes that can_be_optimized until
+    // it meets the first node with can_be_optimize==false along the searching path.
+    // For example, in such a subgraph like -
+    // Node1 (can_be_optimized false) -> Node2 (can_be_optimized false) -> Reshape (skippable true) -> Permute (skippable true)
+    // -> Node3 (can_be_optimized false).
+    // Since Reshape MAY or MAY NOT be optimized out in runtime, Permute should be memory-dependent to all of its two predecessors. Otherwise
+    // Permute may allocate from the same block of Node2 and override its input; Similarly, since Reshape and Permute MAY or MAY NOT be optimized
+    // out in runtime, Node3 should be memory-dependent to all of its three predecessors, to avoid memory conflicting.
     void add_memory_dependency(program_node* node, program_node* dep) {
-        if (node->can_be_optimized() || !dep->can_be_optimized()) {
-            node->add_memory_dependency(dep->id());
+        if (node->get_unique_id() == dep->get_unique_id()) {
+            return;
+        }
+
+        if ((node->can_be_optimized() && !node->is_runtime_skippable()) || !dep->can_be_optimized()) {
+            node->add_memory_dependency(static_cast<int32_t>(dep->get_unique_id()));
         } else {
-            if (node->id() == dep->id()) {
-                return;
+            if (node->is_runtime_skippable() || dep->is_runtime_skippable() || dep->can_be_optimized()) {
+                node->add_memory_dependency(static_cast<int32_t>(dep->get_unique_id()));
             }
-            for (auto subdep : dep->get_dependencies()) {
+
+            for (const auto& subdep : dep->get_dependencies()) {
                 add_memory_dependency(node, subdep.first);
                 add_memory_dependency(subdep.first, node);
             }
@@ -400,9 +350,9 @@ public:
     void run(program& p) override;
 };
 
-class update_loop_primitive_map : public base_pass {
+class update_inner_program_io_map : public base_pass {
 public:
-    update_loop_primitive_map() : base_pass("update_loop_primitive_map") {}
+    update_inner_program_io_map() : base_pass("update_inner_program_io_map") {}
 
 private:
     void run(program& p) override;
@@ -411,6 +361,36 @@ private:
 class add_onednn_optimization_attributes : public base_pass {
 public:
     add_onednn_optimization_attributes() : base_pass("add_onednn_optimization_attributes") {}
+    void run(program& p) override;
+};
+
+class build_implementations : public base_pass {
+public:
+    build_implementations() : base_pass("build_implementations") {}
+    void run(program& p) override;
+};
+
+class reorder_transfer : public base_pass {
+public:
+    reorder_transfer() : base_pass("reorder_transfer") {}
+
+private:
+    void run(program& p) override;
+};
+
+class mark_runtime_skippable_nodes : public base_pass {
+public:
+    mark_runtime_skippable_nodes() : base_pass("mark_runtime_skippable_nodes") {}
+
+private:
+    void run(program& p) override;
+};
+
+class fuse_primitives_with_layout : public base_pass {
+public:
+    explicit fuse_primitives_with_layout() : base_pass("fuse_primitives_with_layout") {}
+
+private:
     void run(program& p) override;
 };
 

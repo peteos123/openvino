@@ -1,8 +1,10 @@
-// Copyright (C) 2019-2022 Intel Corporation
+// Copyright (C) 2019-2024 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "ocl_stream.hpp"
+#include "CL/cl.h"
+#include "intel_gpu/runtime/stream.hpp"
 #include "ocl_event.hpp"
 #include "ocl_user_event.hpp"
 #include "ocl_command_queues_builder.hpp"
@@ -11,11 +13,6 @@
 #include "ocl_common.hpp"
 
 #include <cassert>
-#include <iomanip>
-#include <ios>
-
-#include <fstream>
-#include <thread>
 #include <string>
 #include <vector>
 #include <memory>
@@ -60,7 +57,9 @@ cl_int set_kernel_arg(ocl_kernel_type& kernel, uint32_t idx, cldnn::memory::cptr
         return kernel.setArg(idx, buf);
     } else if (memory_capabilities::is_usm_type(mem->get_allocation_type())) {
         auto buf = std::dynamic_pointer_cast<const ocl::gpu_usm>(mem)->get_buffer();
-        GPU_DEBUG_TRACE_DETAIL << "kernel: " << kernel.get() << " set arg (usm) " << idx << " mem: " << buf.get() << " size: " << mem->size() << std::endl;
+        auto mem_type = std::dynamic_pointer_cast<const ocl::gpu_usm>(mem)->get_allocation_type();
+        GPU_DEBUG_TRACE_DETAIL << "kernel: " << kernel.get() << " set arg (" << mem_type << ") " << idx
+                               << " mem: " << buf.get() << " size: " << mem->size() << std::endl;
         return kernel.setArgUsm(idx, buf);
     } else {
         auto buf = std::dynamic_pointer_cast<const ocl::gpu_buffer>(mem)->get_buffer();
@@ -126,44 +125,48 @@ void set_arguments_impl(ocl_kernel_type& kernel,
                     switch (scalar.t) {
                         case scalar_t::UINT8:
                             status = kernel.setArg(i, scalar.v.u8);
+                            GPU_DEBUG_TRACE_DETAIL << "kernel: " << kernel.get() << " set scalar " << i << " (u8): " << static_cast<int>(scalar.v.u8) << "\n";
                             break;
                         case scalar_t::UINT16:
                             status = kernel.setArg(i, scalar.v.u16);
+                            GPU_DEBUG_TRACE_DETAIL << "kernel: " << kernel.get() << " set scalar " << i << " (u16): " << scalar.v.u16 << "\n";
                             break;
                         case scalar_t::UINT32:
                             status = kernel.setArg(i, scalar.v.u32);
+                            GPU_DEBUG_TRACE_DETAIL << "kernel: " << kernel.get() << " set scalar " << i << " (u32): " << scalar.v.u32 << "\n";
                             break;
                         case scalar_t::UINT64:
                             status = kernel.setArg(i, scalar.v.u64);
+                            GPU_DEBUG_TRACE_DETAIL << "kernel: " << kernel.get() << " set scalar " << i << " (u64): " << scalar.v.u64 << "\n";
                             break;
                         case scalar_t::INT8:
                             status = kernel.setArg(i, scalar.v.s8);
+                            GPU_DEBUG_TRACE_DETAIL << "kernel: " << kernel.get() << " set scalar " << i << " (s8): " << static_cast<int>(scalar.v.s8) << "\n";
                             break;
                         case scalar_t::INT16:
                             status = kernel.setArg(i, scalar.v.s16);
+                            GPU_DEBUG_TRACE_DETAIL << "kernel: " << kernel.get() << " set scalar " << i << " (s16): " << scalar.v.s16 << "\n";
                             break;
                         case scalar_t::INT32:
                             status = kernel.setArg(i, scalar.v.s32);
+                            GPU_DEBUG_TRACE_DETAIL << "kernel: " << kernel.get() << " set scalar " << i << " (s32): " << scalar.v.s32 << "\n";
                             break;
                         case scalar_t::INT64:
                             status = kernel.setArg(i, scalar.v.s64);
+                            GPU_DEBUG_TRACE_DETAIL << "kernel: " << kernel.get() << " set scalar " << i << " (s64): " << scalar.v.s64 << "\n";
                             break;
                         case scalar_t::FLOAT32:
                             status = kernel.setArg(i, scalar.v.f32);
+                            GPU_DEBUG_TRACE_DETAIL << "kernel: " << kernel.get() << " set scalar " << i << " (f32): " << scalar.v.f32 << "\n";
                             break;
                         case scalar_t::FLOAT64:
                             status = kernel.setArg(i, scalar.v.f64);
+                            GPU_DEBUG_TRACE_DETAIL << "kernel: " << kernel.get() << " set scalar " << i << " (f64): " << scalar.v.f64 << "\n";
                             break;
                         default:
                             break;
                     }
                 }
-                break;
-            case args_t::RECURRENT:
-                status = set_kernel_arg(kernel, i, data.recurrent);
-                break;
-            case args_t::HIDDEN:
-                status = set_kernel_arg(kernel, i, data.hidden);
                 break;
             case args_t::CELL:
                 status = set_kernel_arg(kernel, i, data.cell);
@@ -176,81 +179,59 @@ void set_arguments_impl(ocl_kernel_type& kernel,
         }
 
         if (status != CL_SUCCESS) {
-            throw std::runtime_error("Error set arg " + std::to_string(i) + ", error code: " + std::to_string(status) + "\n");
+            throw std::runtime_error("Error set arg " + std::to_string(i)
+                                     + ", kernel: " + kernel.getInfo<CL_KERNEL_FUNCTION_NAME>()
+                                     + ", error code: " + std::to_string(status) + "\n");
         }
     }
 }
 
-sync_methods get_expected_sync_method(const engine_configuration &config) {
-    return config.enable_profiling ? sync_methods::events : config.queue_type == queue_types::out_of_order ? sync_methods::barriers
-                                                                                                           : sync_methods::none;
-}
-
 }  // namespace
 
-ocl_stream::ocl_stream(const ocl_engine &engine)
-    : stream(engine.configuration().queue_type)
-    , _engine(engine)
-    , sync_method(get_expected_sync_method(engine.configuration())) {
+ocl_stream::ocl_stream(const ocl_engine &engine, const ExecutionConfig& config)
+    : stream(config.get_property(ov::intel_gpu::queue_type), stream::get_expected_sync_method(config))
+    , _engine(engine) {
     auto context = engine.get_cl_context();
     auto device = engine.get_cl_device();
-    auto config = engine.configuration();
     ocl::command_queues_builder queue_builder;
-    queue_builder.set_profiling(config.enable_profiling);
-    queue_builder.set_out_of_order((config.queue_type == queue_types::out_of_order));
+    queue_builder.set_profiling(config.get_property(ov::enable_profiling));
+    queue_builder.set_out_of_order(m_queue_type == QueueTypes::out_of_order);
 
-    if (sync_method == sync_methods::none && config.queue_type == queue_types::out_of_order) {
-        throw std::runtime_error("[CLDNN] Unexpected sync method (none) is specified for out_of_order queue");
-    }
+    OPENVINO_ASSERT(m_sync_method != SyncMethods::none || m_queue_type == QueueTypes::in_order,
+                    "[GPU] Unexpected sync method (none) is specified for out_of_order queue");
 
     bool priorty_extensions = engine.extension_supported("cl_khr_priority_hints") && engine.extension_supported("cl_khr_create_command_queue");
-    queue_builder.set_priority_mode(config.priority_mode, priorty_extensions);
+    queue_builder.set_priority_mode(config.get_property(ov::intel_gpu::hint::queue_priority), priorty_extensions);
 
     bool throttle_extensions = engine.extension_supported("cl_khr_throttle_hints") && engine.extension_supported("cl_khr_create_command_queue");
-    queue_builder.set_throttle_mode(config.throttle_mode, throttle_extensions);
+    queue_builder.set_throttle_mode(config.get_property(ov::intel_gpu::hint::queue_throttle), throttle_extensions);
 
     bool queue_families_extension = engine.get_device_info().supports_queue_families;
     queue_builder.set_supports_queue_families(queue_families_extension);
 
     _command_queue = queue_builder.build(context, device);
-
-#ifdef ENABLE_ONEDNN_FOR_GPU
-    if (config.queue_type == queue_types::in_order && engine.get_device_info().vendor_id == INTEL_VENDOR_ID) {
-        auto onednn_engine = engine.get_onednn_engine();
-        _onednn_stream = std::make_shared<dnnl::stream>(dnnl::ocl_interop::make_stream(engine.get_onednn_engine(), _command_queue.get()));
-    }
-#endif
 }
 
-ocl_stream::ocl_stream(const ocl_engine &engine, void *handle)
-    : stream(engine.configuration().queue_type)
-    , _engine(engine)
-    , sync_method(get_expected_sync_method(engine.configuration())) {
+ocl_stream::ocl_stream(const ocl_engine &engine, const ExecutionConfig& config, void *handle)
+    : stream(ocl_stream::detect_queue_type(handle), stream::get_expected_sync_method(config))
+    , _engine(engine) {
     auto casted_handle = static_cast<cl_command_queue>(handle);
     _command_queue = ocl_queue_type(casted_handle, true);
-
-    if (ocl_stream::detect_queue_type(handle) != engine.configuration().queue_type)
-        throw std::runtime_error("Inconsistent engine config and external user queue are passed to ocl_stream");
-
-#ifdef ENABLE_ONEDNN_FOR_GPU
-    auto config = engine.configuration();
-    if (config.queue_type == queue_types::in_order) {
-        auto onednn_engine = engine.get_onednn_engine();
-        _onednn_stream = std::make_shared<dnnl::stream>(dnnl::ocl_interop::make_stream(engine.get_onednn_engine(), _command_queue.get()));
-    }
-#endif
 }
 
 #ifdef ENABLE_ONEDNN_FOR_GPU
-dnnl::stream& ocl_stream::get_onednn_stream() const {
-    if (!_onednn_stream)
-        throw std::runtime_error("[GPU] onednn stream is nullptr");
+dnnl::stream& ocl_stream::get_onednn_stream() {
+    OPENVINO_ASSERT(m_queue_type == QueueTypes::in_order, "[GPU] Can't create onednn stream handle as onednn doesn't support out-of-order queue");
+    OPENVINO_ASSERT(_engine.get_device_info().vendor_id == INTEL_VENDOR_ID, "[GPU] Can't create onednn stream handle as for non-Intel devices");
+    if (!_onednn_stream) {
+        _onednn_stream = std::make_shared<dnnl::stream>(dnnl::ocl_interop::make_stream(_engine.get_onednn_engine(), _command_queue.get()));
+    }
 
     return *_onednn_stream;
 }
 #endif
 
-queue_types ocl_stream::detect_queue_type(void *queue_handle) {
+QueueTypes ocl_stream::detect_queue_type(void *queue_handle) {
     cl_command_queue queue = static_cast<cl_command_queue>(queue_handle);
     cl_command_queue_properties properties;
     auto status = clGetCommandQueueInfo(queue, CL_QUEUE_PROPERTIES, sizeof(cl_command_queue_properties), &properties, nullptr);
@@ -258,7 +239,7 @@ queue_types ocl_stream::detect_queue_type(void *queue_handle) {
         throw std::runtime_error("Can't get queue properties for user handle\n");
     }
 
-    return (properties & CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE) ? queue_types::out_of_order : queue_types::in_order;
+    return (properties & CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE) ? QueueTypes::out_of_order : QueueTypes::in_order;
 }
 
 void ocl_stream::set_arguments(kernel& kernel, const kernel_arguments_desc& args_desc, const kernel_arguments_data& args) {
@@ -270,10 +251,10 @@ void ocl_stream::set_arguments(kernel& kernel, const kernel_arguments_desc& args
     auto& kern = ocl_kernel.get_handle();
 
     try {
-        GPU_DEBUG_TRACE_DETAIL << "Set arguments for primitive: " << args_desc.layerID << " (" << kern.get() << ")\n";
+        GPU_DEBUG_TRACE_DETAIL << "Set arguments for primitive: " << args_desc.layerID << " (" << kernel.get_id() << " = " << kern.get() << ")\n";
         set_arguments_impl(kern, args_desc.arguments, args);
     } catch (cl::Error const& err) {
-        throw ocl_error(err);
+        OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
     }
 }
 
@@ -289,7 +270,7 @@ event::ptr ocl_stream::enqueue_kernel(kernel& kernel,
     auto local = toNDRange(args_desc.workGroups.local);
     std::vector<cl::Event> dep_events;
     std::vector<cl::Event>* dep_events_ptr = nullptr;
-    if (sync_method == sync_methods::events) {
+    if (m_sync_method == SyncMethods::events) {
         for (auto& dep : deps) {
             if (auto ocl_base_ev = std::dynamic_pointer_cast<ocl_base_event>(dep)) {
                 if (ocl_base_ev->get().get() != nullptr)
@@ -297,32 +278,45 @@ event::ptr ocl_stream::enqueue_kernel(kernel& kernel,
             }
         }
         dep_events_ptr = &dep_events;
-    } else if (sync_method == sync_methods::barriers) {
+    } else if (m_sync_method == SyncMethods::barriers) {
         sync_events(deps, is_output);
     }
 
     cl::Event ret_ev;
 
-    bool set_output_event = sync_method == sync_methods::events || is_output;
+    bool set_output_event = m_sync_method == SyncMethods::events || is_output;
 
     try {
         _command_queue.enqueueNDRangeKernel(kern, cl::NullRange, global, local, dep_events_ptr, set_output_event ? &ret_ev : nullptr);
     } catch (cl::Error const& err) {
-        throw ocl_error(err);
+        ocl::rethrow_or_exit(err, _engine.get_device_info());
     }
 
     return std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
 }
 
 void ocl_stream::enqueue_barrier() {
-    _command_queue.enqueueBarrierWithWaitList(nullptr, nullptr);
+    try {
+        _command_queue.enqueueBarrierWithWaitList(nullptr, nullptr);
+    } catch (cl::Error const& err) {
+        OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
+    }
 }
 
 event::ptr ocl_stream::enqueue_marker(std::vector<event::ptr> const& deps, bool is_output) {
-    if (deps.empty())
-        return std::make_shared<ocl_user_event>(_engine.get_cl_context(), true);
+    // Wait for all previously enqueued tasks if deps list is empty
+    if (deps.empty()) {
+        cl::Event ret_ev;
+        try {
+            _command_queue.enqueueMarkerWithWaitList(nullptr, &ret_ev);
+        } catch (cl::Error const& err) {
+            OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
+        }
 
-    if (sync_method == sync_methods::events) {
+        return std::make_shared<ocl_event>(ret_ev);
+    }
+
+    if (m_sync_method == SyncMethods::events) {
         cl::Event ret_ev;
         std::vector<cl::Event> dep_events;
         for (auto& dep : deps) {
@@ -337,11 +331,11 @@ event::ptr ocl_stream::enqueue_marker(std::vector<event::ptr> const& deps, bool 
             }
             _command_queue.enqueueMarkerWithWaitList(&dep_events, &ret_ev);
         } catch (cl::Error const& err) {
-            throw ocl_error(err);
+            OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
         }
 
         return std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
-    } else if (sync_method == sync_methods::barriers) {
+    } else if (m_sync_method == SyncMethods::barriers) {
         sync_events(deps, is_output);
         return std::make_shared<ocl_event>(_last_barrier_ev, _last_barrier);
     } else {
@@ -350,6 +344,8 @@ event::ptr ocl_stream::enqueue_marker(std::vector<event::ptr> const& deps, bool 
 }
 
 event::ptr ocl_stream::group_events(std::vector<event::ptr> const& deps) {
+    if (deps.size() == 1)
+        return deps[0];
     return std::make_shared<ocl_events>(deps);
 }
 
@@ -362,39 +358,67 @@ event::ptr ocl_stream::create_base_event() {
     return std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
 }
 
-void ocl_stream::flush() const { get_cl_queue().flush(); }
-void ocl_stream::finish() const { get_cl_queue().finish(); }
+void ocl_stream::flush() const {
+    try {
+        get_cl_queue().flush();
+    } catch (cl::Error const& err) {
+        OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
+    }
+}
+void ocl_stream::finish() const {
+    try {
+        get_cl_queue().finish();
+    } catch (cl::Error const& err) {
+        OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
+    }
+}
+
+void ocl_stream::wait() {
+    cl::Event ev;
+
+    // Enqueue barrier with empty wait list to wait for all previously enqueued tasks
+    try {
+        _command_queue.enqueueBarrierWithWaitList(nullptr, &ev);
+    } catch (cl::Error const& err) {
+        OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
+    }
+    ev.wait();
+}
 
 void ocl_stream::wait_for_events(const std::vector<event::ptr>& events) {
     if (events.empty())
         return;
 
     bool needs_barrier = false;
-    std::vector<cl::Event> clevents;
+    std::vector<cl_event> clevents;
     for (auto& ev : events) {
+        if (!ev)
+            continue;
+
         if (auto ocl_base_ev = downcast<ocl_base_event>(ev.get())) {
             if (ocl_base_ev->get().get() != nullptr) {
-                clevents.push_back(ocl_base_ev->get());
+                clevents.push_back(ocl_base_ev->get().get());
             } else {
                 needs_barrier = true;
             }
         }
     }
 
+    cl::Event barrier_ev;
     if (needs_barrier) {
         try {
-            cl::Event barrier_ev;
             _command_queue.enqueueBarrierWithWaitList(nullptr, &barrier_ev);
-            clevents.push_back(barrier_ev);
+            clevents.push_back(barrier_ev.get());
         } catch (cl::Error const& err) {
-            throw ocl_error(err);
+            OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
         }
     }
 
-    try {
-        cl::WaitForEvents(clevents);
-    } catch (cl::Error const& err) {
-        throw ocl_error(err);
+    if (!clevents.empty()) {
+        auto err = clWaitForEvents(static_cast<cl_uint>(clevents.size()), &clevents[0]);
+        if (err != CL_SUCCESS) {
+            OPENVINO_THROW("[GPU] clWaitForEvents failed with ", err, " code");
+        }
     }
 }
 
@@ -414,7 +438,7 @@ void ocl_stream::sync_events(std::vector<event::ptr> const& deps, bool is_output
             else
                 _command_queue.enqueueBarrierWithWaitList(nullptr, nullptr);
         } catch (cl::Error const& err) {
-            throw ocl_error(err);
+            OPENVINO_THROW(OCL_ERR_MSG_FMT(err));
         }
 
         _last_barrier = ++_queue_counter;

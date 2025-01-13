@@ -1,59 +1,45 @@
 # -*- coding: utf-8 -*-
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+import sys
 import numpy as np
 import os
-from sys import platform
 from pathlib import Path
 
-import openvino.runtime.opset8 as ov
-from openvino.runtime import (
+from openvino import (
     Model,
     Core,
-    CompiledModel,
     Tensor,
     PartialShape,
-    Extension,
+    CompiledModel,
     tensor_from_file,
     compile_model,
+    serialize,
 )
 
-from tests.conftest import (
-    model_path,
-    model_onnx_path,
+import openvino.properties as props
+import openvino.properties.hint as hints
+from openvino import Extension
+from tests.utils.helpers import (
+    generate_image,
+    generate_relu_compiled_model,
+    get_relu_model,
     plugins_path,
+    compare_models,
+    create_filenames_for_ir,
     get_model_with_template_extension,
 )
-
-from tests.test_utils.test_utils import (
-    generate_image,
-    generate_relu_model,
-)
-
-
-plugins_xml, plugins_win_xml, plugins_osx_xml = plugins_path()
-test_net_xml, test_net_bin = model_path()
-test_net_onnx = model_onnx_path()
 
 
 def test_compact_api_xml():
     img = generate_image()
 
-    model = compile_model(test_net_xml)
-    assert isinstance(model, CompiledModel)
-    results = model.infer_new_request({"data": img})
-    assert np.argmax(results[list(results)[0]]) == 9
-
-
-def test_compact_api_xml_posix_path():
-    img = generate_image()
-
-    model = compile_model(Path(test_net_xml))
-    assert isinstance(model, CompiledModel)
-    results = model.infer_new_request({"data": img})
-    assert np.argmax(results[list(results)[0]]) == 9
+    compiled_model = compile_model(get_relu_model())
+    assert isinstance(compiled_model, CompiledModel)
+    results = compiled_model.infer_new_request({"data": img})
+    assert np.argmax(results[list(results)[0]]) == 531
 
 
 def test_compact_api_wrong_path():
@@ -69,114 +55,192 @@ def test_compact_api_wrong_path():
     assert "Path: 'test class' does not exist. Please provide valid model's path either as a string, bytes or pathlib.Path" in str(e.value)
 
 
-def test_compact_api_onnx():
-    img = generate_image()
-
-    model = compile_model(test_net_onnx)
-    assert isinstance(model, CompiledModel)
-    results = model.infer_new_request({"data": img})
-    assert np.argmax(results[list(results)[0]]) == 9
-
-
-def test_compact_api_onnx_posix_path():
-    img = generate_image()
-
-    model = compile_model(Path(test_net_onnx))
-    assert isinstance(model, CompiledModel)
-    results = model.infer_new_request({"data": img})
-    assert np.argmax(results[list(results)[0]]) == 9
-
-
-def test_core_class():
+def test_core_class(device):
     input_shape = [1, 3, 4, 4]
-    model = generate_relu_model(input_shape)
+    compiled_model = generate_relu_compiled_model(device, input_shape=input_shape)
 
-    request = model.create_infer_request()
+    request = compiled_model.create_infer_request()
     input_data = np.random.rand(*input_shape).astype(np.float32) - 0.5
 
     expected_output = np.maximum(0.0, input_data)
 
     input_tensor = Tensor(input_data)
-    results = request.infer({"parameter": input_tensor})
-    assert np.allclose(results[list(results)[0]], expected_output)
+    results = request.infer({"data": input_tensor})
+    # convert node may be introduced by API 2.0, which brings some deviation
+    assert np.allclose(results[list(results)[0]], expected_output, 1e-4, 1e-4)
 
 
-def test_compile_model(device):
+# request - https://docs.pytest.org/en/7.1.x/reference/reference.html#request
+@pytest.mark.parametrize("device_name", [
+    None,
+    "CPU",
+])
+def test_compile_model(request, tmp_path, device_name):
     core = Core()
-    model = core.read_model(model=test_net_xml, weights=test_net_bin)
-    compiled_model = core.compile_model(model, device)
+    xml_path, bin_path = create_filenames_for_ir(request.node.name, tmp_path)
+    relu_model = get_relu_model()
+    serialize(relu_model, xml_path, bin_path)
+    model = core.read_model(model=xml_path, weights=bin_path)
+    compiled_model = None
+    if device_name is None:
+        compiled_model = core.compile_model(model)
+    else:
+        compiled_model = core.compile_model(model, device_name)
+
     assert isinstance(compiled_model, CompiledModel)
 
 
-def test_compile_model_without_device():
-    core = Core()
-    model = core.read_model(model=test_net_xml, weights=test_net_bin)
-    compiled_model = core.compile_model(model)
+@pytest.fixture
+def get_model():
+    return get_relu_model()
+
+
+@pytest.fixture
+def get_model_path(request, tmp_path):
+    xml_path, _ = create_filenames_for_ir(request.node.name, tmp_path, True)
+    serialize(get_relu_model(), xml_path)
+    return Path(xml_path)
+
+
+@pytest.mark.parametrize("model_type", [
+    "get_model",
+    "get_model_path",
+])
+@pytest.mark.parametrize("device_name", [
+    None,
+    "CPU",
+])
+@pytest.mark.parametrize("config", [
+    None,
+    {hints.performance_mode(): hints.PerformanceMode.THROUGHPUT},
+    {hints.execution_mode: hints.ExecutionMode.PERFORMANCE},
+])
+def test_compact_api(model_type, device_name, config, request):
+    compiled_model = None
+
+    model = request.getfixturevalue(model_type)
+    if device_name is not None:
+        compiled_model = compile_model(model=model, device_name=device_name, config=config)
+    else:
+        compiled_model = compile_model(model=model, config=config)
+
     assert isinstance(compiled_model, CompiledModel)
 
 
-def test_read_model_from_ir():
+# request - https://docs.pytest.org/en/7.1.x/reference/reference.html#request
+def test_read_model_from_ir(request, tmp_path):
     core = Core()
-    model = core.read_model(model=test_net_xml, weights=test_net_bin)
+    xml_path, bin_path = create_filenames_for_ir(request.node.name, tmp_path)
+    relu_model = get_relu_model()
+    serialize(relu_model, xml_path, bin_path)
+    model = core.read_model(model=xml_path, weights=bin_path)
     assert isinstance(model, Model)
 
-    model = core.read_model(model=test_net_xml)
+    model = core.read_model(model=xml_path)
     assert isinstance(model, Model)
 
 
-def test_read_model_from_tensor():
+# request - https://docs.pytest.org/en/7.1.x/reference/reference.html#request
+def test_read_model_from_ir_with_user_config(request, tmp_path):
     core = Core()
-    model = open(test_net_xml).read()
-    tensor = tensor_from_file(test_net_bin)
+    xml_path, bin_path = create_filenames_for_ir(request.node.name, tmp_path)
+    relu_model = get_relu_model()
+    serialize(relu_model, xml_path, bin_path)
+
+    core_cache_dir = core.get_property("CACHE_DIR")
+    cache_path = tmp_path / Path("cache")
+
+    model = core.read_model(xml_path, bin_path, config={"CACHE_DIR": f"{cache_path}"})
+
+    assert isinstance(model, Model)
+    assert core_cache_dir == core.get_property("CACHE_DIR")
+    assert os.path.exists(cache_path)
+    os.rmdir(cache_path)
+
+
+# request - https://docs.pytest.org/en/7.1.x/reference/reference.html#request
+def test_read_model_from_tensor(request, tmp_path):
+    core = Core()
+    xml_path, bin_path = create_filenames_for_ir(request.node.name, tmp_path, is_xml_path=True, is_bin_path=True)
+    relu_model = get_relu_model()
+    serialize(relu_model, xml_path, bin_path)
+    arr = np.ones(shape=(10), dtype=np.int8)
+    arr.tofile(bin_path)
+    model = open(xml_path).read()
+    tensor = tensor_from_file(bin_path)
     model = core.read_model(model=model, weights=tensor)
     assert isinstance(model, Model)
 
 
-def test_read_model_as_path():
+def test_read_model_with_wrong_input():
     core = Core()
-    model = core.read_model(model=Path(test_net_xml), weights=Path(test_net_bin))
-    assert isinstance(model, Model)
-
-    model = core.read_model(model=test_net_xml, weights=Path(test_net_bin))
-    assert isinstance(model, Model)
-
-    model = core.read_model(model=Path(test_net_xml))
-    assert isinstance(model, Model)
+    with pytest.raises(RuntimeError) as e:
+        core.read_model(model=3, weights=3)
+    assert "Provided python object type <class 'int'> isn't supported as 'model' argument." in str(e.value)
 
 
-def test_read_model_from_onnx():
+# request - https://docs.pytest.org/en/7.1.x/reference/reference.html#request
+def test_read_model_as_path(request, tmp_path):
     core = Core()
-    model = core.read_model(model=test_net_onnx)
+    xml_path, bin_path = create_filenames_for_ir(request.node.name, tmp_path, True, True)
+    relu_model = get_relu_model()
+    serialize(relu_model, xml_path, bin_path)
+
+    model = core.read_model(model=Path(xml_path), weights=Path(bin_path))
+    assert isinstance(model, Model)
+
+    model = core.read_model(model=xml_path, weights=Path(bin_path))
+    assert isinstance(model, Model)
+
+    model = core.read_model(model=Path(xml_path))
     assert isinstance(model, Model)
 
 
-def test_read_model_from_onnx_as_path():
+# request - https://docs.pytest.org/en/7.1.x/reference/reference.html#request
+def test_read_model_as_path_with_user_config(request, tmp_path):
     core = Core()
-    model = core.read_model(model=Path(test_net_onnx))
+    xml_path, bin_path = create_filenames_for_ir(request.node.name, tmp_path)
+    relu_model = get_relu_model()
+    serialize(relu_model, xml_path, bin_path)
+
+    core_cache_dir = core.get_property("CACHE_DIR")
+    cache_path = tmp_path / Path("cache_as_path")
+
+    model = core.read_model(Path(xml_path), Path(bin_path), config={"CACHE_DIR": f"{cache_path}"})
+
     assert isinstance(model, Model)
+    assert core_cache_dir == core.get_property("CACHE_DIR")
+    assert os.path.exists(cache_path)
+    os.rmdir(cache_path)
 
 
-def test_read_net_from_buffer():
+# request - https://docs.pytest.org/en/7.1.x/reference/reference.html#request
+def test_read_model_from_buffer(request, tmp_path):
     core = Core()
-    with open(test_net_bin, "rb") as f:
+    xml_path, bin_path = create_filenames_for_ir(request.node.name, tmp_path)
+    relu_model = get_relu_model()
+    serialize(relu_model, xml_path, bin_path)
+    with open(bin_path, "rb") as f:
         weights = f.read()
-    with open(model_path()[0], "rb") as f:
+    with open(xml_path, "rb") as f:
         xml = f.read()
     model = core.read_model(model=xml, weights=weights)
     assert isinstance(model, Model)
 
 
-def test_net_from_buffer_valid():
+# request - https://docs.pytest.org/en/7.1.x/reference/reference.html#request
+def test_model_from_buffer_valid(request, tmp_path):
     core = Core()
-    with open(test_net_bin, "rb") as f:
+    xml_path, bin_path = create_filenames_for_ir(request.node.name, tmp_path)
+    relu_model = get_relu_model()
+    serialize(relu_model, xml_path, bin_path)
+    with open(bin_path, "rb") as f:
         weights = f.read()
-    with open(model_path()[0], "rb") as f:
+    with open(xml_path, "rb") as f:
         xml = f.read()
     model = core.read_model(model=xml, weights=weights)
-    ref_model = core.read_model(model=test_net_xml, weights=test_net_bin)
-    assert model.get_parameters() == ref_model.get_parameters()
-    assert model.get_results() == ref_model.get_results()
-    assert model.get_ordered_ops() == ref_model.get_ordered_ops()
+    ref_model = core.read_model(model=xml_path, weights=bin_path)
+    assert compare_models(model, ref_model)
 
 
 def test_get_version(device):
@@ -192,17 +256,19 @@ def test_get_version(device):
 
 def test_available_devices(device):
     core = Core()
-    devices = core.available_devices
-    assert device in devices, (
-        f"Current device '{device}' is not listed in "
-        f"available devices '{', '.join(devices)}'"
-    )
+    devices_attr = core.available_devices
+    devices_method = core.get_available_devices()
+    for devices in (devices_attr, devices_method):
+        assert device in devices, (
+            f"Current device '{device}' is not listed in "
+            f"available devices '{', '.join(devices)}'"
+        )
 
 
 def test_get_property(device):
     core = Core()
-    conf = core.get_property(device, "SUPPORTED_CONFIG_KEYS")
-    assert "PERF_COUNT" in conf
+    conf = core.get_property(device, props.supported_properties())
+    assert props.enable_profiling in conf
 
 
 @pytest.mark.skipif(
@@ -211,14 +277,14 @@ def test_get_property(device):
 )
 def test_get_property_list_of_str():
     core = Core()
-    param = core.get_property("CPU", "OPTIMIZATION_CAPABILITIES")
+    param = core.get_property("CPU", props.device.capabilities)
     assert isinstance(param, list), (
-        "Parameter value for 'OPTIMIZATION_CAPABILITIES' "
+        f"Parameter value for {props.device.capabilities} "
         f"metric must be a list but {type(param)} is returned"
     )
     assert all(
         isinstance(v, str) for v in param
-    ), "Not all of the parameter values for 'OPTIMIZATION_CAPABILITIES' metric are strings!"
+    ), f"Not all of the parameter values for {props.device.capabilities} metric are strings!"
 
 
 @pytest.mark.skipif(
@@ -227,14 +293,14 @@ def test_get_property_list_of_str():
 )
 def test_get_property_tuple_of_two_ints():
     core = Core()
-    param = core.get_property("CPU", "RANGE_FOR_STREAMS")
+    param = core.get_property("CPU", props.range_for_streams)
     assert isinstance(param, tuple), (
-        "Parameter value for 'RANGE_FOR_STREAMS' "
+        f"Parameter value for {props.range_for_streams} "
         f"metric must be tuple but {type(param)} is returned"
     )
     assert all(
         isinstance(v, int) for v in param
-    ), "Not all of the parameter values for 'RANGE_FOR_STREAMS' metric are integers!"
+    ), f"Not all of the parameter values for {props.range_for_stream}s metric are integers!"
 
 
 @pytest.mark.skipif(
@@ -243,14 +309,14 @@ def test_get_property_tuple_of_two_ints():
 )
 def test_get_property_tuple_of_three_ints():
     core = Core()
-    param = core.get_property("CPU", "RANGE_FOR_ASYNC_INFER_REQUESTS")
+    param = core.get_property("CPU", props.range_for_async_infer_requests)
     assert isinstance(param, tuple), (
-        "Parameter value for 'RANGE_FOR_ASYNC_INFER_REQUESTS' "
+        f"Parameter value for {props.range_for_async_infer_requests} "
         f"metric must be tuple but {type(param)} is returned"
     )
     assert all(isinstance(v, int) for v in param), (
         "Not all of the parameter values for "
-        "'RANGE_FOR_ASYNC_INFER_REQUESTS' metric are integers!"
+        f"{props.range_for_async_infer_requests} metric are integers!"
     )
 
 
@@ -260,71 +326,65 @@ def test_get_property_tuple_of_three_ints():
 )
 def test_get_property_str():
     core = Core()
-    param = core.get_property("CPU", "FULL_DEVICE_NAME")
+    param = core.get_property("CPU", props.device.full_name)
     assert isinstance(param, str), (
-        "Parameter value for 'FULL_DEVICE_NAME' "
+        f"Parameter value for {props.device.full_name} "
         f"metric must be string but {type(param)} is returned"
     )
 
 
 def test_query_model(device):
     core = Core()
-    model = core.read_model(model=test_net_xml, weights=test_net_bin)
+    model = get_relu_model()
     query_model = core.query_model(model=model, device_name=device)
     ops_model = model.get_ordered_ops()
-    ops_func_names = [op.friendly_name for op in ops_model]
+    ops_model_names = [op.friendly_name for op in ops_model]
     assert [
-        key for key in query_model.keys() if key not in ops_func_names
+        key for key in query_model.keys() if key not in ops_model_names
     ] == [], "Not all network layers present in query_model results"
-    assert next(iter(set(query_model.values()))) == device, "Wrong device for some layers"
+    assert device in next(iter(set(query_model.values()))), "Wrong device for some layers"
 
 
-@pytest.mark.dynamic_library()
-@pytest.mark.skipif(os.environ.get("TEST_DEVICE", "CPU") != "CPU", reason="Device independent test")
+@pytest.mark.dynamic_library
 def test_register_plugin():
+    device = "TEST_DEVICE"
+    lib_name = "test_plugin"
+    full_lib_name = lib_name + ".dll" if sys.platform == "win32" else "lib" + lib_name + ".so"
+
     core = Core()
-    core.register_plugin("openvino_intel_cpu_plugin", "BLA")
-    model = core.read_model(model=test_net_xml, weights=test_net_bin)
-    exec_net = core.compile_model(model, "BLA")
-    assert isinstance(exec_net, CompiledModel), "Cannot load the network to the registered plugin with name 'BLA'"
-
-
-@pytest.mark.dynamic_library()
-@pytest.mark.skipif(os.environ.get("TEST_DEVICE", "CPU") != "CPU", reason="Device independent test")
-def test_register_plugins():
-    core = Core()
-    if platform == "linux" or platform == "linux2":
-        core.register_plugins(plugins_xml)
-    elif platform == "darwin":
-        core.register_plugins(plugins_osx_xml)
-    elif platform == "win32":
-        core.register_plugins(plugins_win_xml)
-
-    model = core.read_model(model=test_net_xml, weights=test_net_bin)
-    exec_net = core.compile_model(model, "CUSTOM")
-    assert isinstance(exec_net, CompiledModel), (
-        "Cannot load the network to "
-        "the registered plugin with name 'CUSTOM' "
-        "registered in the XML file"
-    )
-
-
-@pytest.mark.skip(reason="Need to figure out if it's expected behaviour (fails with C++ API as well")
-def test_unregister_plugin(device):
-    core = Core()
-    core.unload_plugin(device)
-    model = core.read_model(model=test_net_xml, weights=test_net_bin)
+    core.register_plugin(lib_name, device)
     with pytest.raises(RuntimeError) as e:
-        core.load_network(model, device)
-    assert (
-        f"Device with '{device}' name is not registered in the OpenVINO Runtime"
-        in str(e.value)
-    )
+        core.get_versions(device)
+    assert f"Cannot load library '{full_lib_name}'" in str(e.value)
 
 
-@pytest.mark.template_plugin()
-@pytest.mark.skip(reason="Sporadically failed on mac with error:  Cannot add extension."
-                         "Cannot find entry point to the extension library")
+@pytest.mark.dynamic_library
+def test_register_plugins():
+    device = "TEST_DEVICE"
+    lib_name = "test_plugin"
+    full_lib_name = lib_name + ".dll" if sys.platform == "win32" else "lib" + lib_name + ".so"
+    plugins_xml = plugins_path(device, full_lib_name)
+
+    core = Core()
+    core.register_plugins(plugins_xml)
+    os.remove(plugins_xml)
+
+    with pytest.raises(RuntimeError) as e:
+        core.get_versions(device)
+    assert f"Cannot load library '{full_lib_name}'" in str(e.value)
+
+
+def test_unload_plugin(device):
+    core = Core()
+    # Trigger plugin loading
+    core.get_versions(device)
+    # Unload plugin
+    core.unload_plugin(device)
+
+
+@pytest.mark.template_extension
+@pytest.mark.dynamic_library
+@pytest.mark.xfail(condition=sys.platform == "darwin", reason="Ticket - 132696")
 def test_add_extension_template_extension(device):
     core, model = get_model_with_template_extension()
     assert isinstance(model, Model)
@@ -336,8 +396,8 @@ def test_add_extension_template_extension(device):
     model.reshape(new_shapes)
     # compile to check objects can be destroyed
     # in order core -> model -> compiled
-    compiled = core.compile_model(model, device)
-    assert compiled.input().partial_shape == after_reshape
+    compiled_model = core.compile_model(model, device)
+    assert compiled_model.input().partial_shape == after_reshape
 
 
 def test_add_extension():
@@ -348,7 +408,7 @@ def test_add_extension():
     core = Core()
     core.add_extension(EmptyExtension())
     core.add_extension([EmptyExtension(), EmptyExtension()])
-    model = core.read_model(model=test_net_xml, weights=test_net_bin)
+    model = get_relu_model()
     assert isinstance(model, Model)
 
 
@@ -420,7 +480,7 @@ def test_read_model_from_buffer_no_weights():
 
 def test_infer_new_request_return_type(device):
     core = Core()
-    model = core.read_model(model=test_net_xml, weights=test_net_bin)
+    model = get_relu_model()
     img = generate_image()
     compiled_model = core.compile_model(model, device)
     res = compiled_model.infer_new_request({"data": img})
@@ -428,6 +488,6 @@ def test_infer_new_request_return_type(device):
 
     assert isinstance(arr, np.ndarray)
     assert arr.itemsize == 4
-    assert arr.shape == (10,)
+    assert arr.shape == (3, 32, 32)
     assert arr.dtype == "float32"
-    assert arr.nbytes == 40
+    assert arr.nbytes == 12288

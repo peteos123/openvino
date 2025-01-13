@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -13,7 +13,7 @@ namespace v3 {
 /// \ingroup ov_ops_cpp_api
 class OPENVINO_API ShapeOf : public util::ShapeOfBase {
 public:
-    OPENVINO_OP("ShapeOf", "opset3", util::ShapeOfBase, 3);
+    OPENVINO_OP("ShapeOf", "opset3", util::ShapeOfBase);
     ShapeOf() = default;
     /// \brief Constructs a shape-of operation.
     ShapeOf(const Output<Node>& arg, const element::Type output_type = element::i64);
@@ -32,16 +32,13 @@ public:
     // Overload collision with method on Node
     using Node::set_output_type;
 
-    OPENVINO_SUPPRESS_DEPRECATED_START
-    bool evaluate(const HostTensorVector& output_values, const HostTensorVector& input_values) const override;
-    OPENVINO_SUPPRESS_DEPRECATED_END
     bool has_evaluate() const override;
-    OPENVINO_SUPPRESS_DEPRECATED_START
-    bool evaluate_lower(const HostTensorVector& output_values) const override;
-    bool evaluate_upper(const HostTensorVector& output_values) const override;
-    OPENVINO_SUPPRESS_DEPRECATED_END
-    bool evaluate_label(TensorLabelVector& output_labels) const override;
+    bool evaluate(TensorVector& output_values, const TensorVector& input_values) const override;
+    bool evaluate_lower(TensorVector& output_values) const override;
+    bool evaluate_upper(TensorVector& output_values) const override;
+    bool evaluate_symbol(TensorSymbolVector& output_symbols) const override;
     bool constant_fold(OutputVector& output_values, const OutputVector& input_values) override;
+    bool can_constant_fold(const OutputVector& inputs_values) const override;
 
 private:
     element::Type m_output_type;
@@ -58,21 +55,17 @@ public:
     /// \brief Constructs a shape-of operation.
     ShapeOf(const Output<Node>& arg);
 
-    bool visit_attributes(AttributeVisitor& visitor) override;
     std::shared_ptr<Node> clone_with_new_inputs(const OutputVector& new_args) const override;
 
     void validate_and_infer_types() override;
 
-    OPENVINO_SUPPRESS_DEPRECATED_START
-    bool evaluate(const HostTensorVector& output_values, const HostTensorVector& input_values) const override;
-    OPENVINO_SUPPRESS_DEPRECATED_END
     bool has_evaluate() const override;
-    OPENVINO_SUPPRESS_DEPRECATED_START
-    bool evaluate_lower(const HostTensorVector& output_values) const override;
-    bool evaluate_upper(const HostTensorVector& output_values) const override;
-    OPENVINO_SUPPRESS_DEPRECATED_END
-    bool evaluate_label(TensorLabelVector& output_labels) const override;
+    bool evaluate(TensorVector& output_values, const TensorVector& input_values) const override;
+    bool evaluate_lower(TensorVector& output_values) const override;
+    bool evaluate_upper(TensorVector& output_values) const override;
+    bool evaluate_symbol(TensorSymbolVector& output_symbols) const override;
     bool constant_fold(OutputVector& output_values, const OutputVector& input_values) override;
+    bool can_constant_fold(const OutputVector& inputs_values) const override;
 };
 }  // namespace v0
 }  // namespace op

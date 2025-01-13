@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -19,8 +19,8 @@ ParamsKey ConvertColorKernelRef::GetSupportedKey() const {
     k.EnableOutputDataType(Datatype::UINT8);
 
     k.EnableInputLayout(DataLayout::nv12);
-    k.EnableInputLayout(DataLayout::byxf);
-    k.EnableOutputLayout(DataLayout::byxf);
+    k.EnableInputLayout(DataLayout::bfyx);
+    k.EnableOutputLayout(DataLayout::bfyx);
 
     k.EnableDifferentTypes();
     k.EnableTensorOffset();
@@ -29,11 +29,11 @@ ParamsKey ConvertColorKernelRef::GetSupportedKey() const {
     return k;
 }
 
-KernelsData ConvertColorKernelRef::GetKernelsData(const Params& params, const optional_params& options) const {
-    return GetCommonKernelsData(params, options);
+KernelsData ConvertColorKernelRef::GetKernelsData(const Params& params) const {
+    return GetCommonKernelsData(params);
 }
 
-KernelsPriority ConvertColorKernelRef::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority ConvertColorKernelRef::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_9;
 }
 }  // namespace kernel_selector

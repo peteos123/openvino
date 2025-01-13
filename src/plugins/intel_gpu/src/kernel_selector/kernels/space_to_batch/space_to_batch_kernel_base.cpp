@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -8,9 +8,8 @@
 
 namespace kernel_selector {
 
-bool SpaceToBatchKernelBase::Validate(const Params& p, const optional_params& o) const {
-    if (p.GetType() != KernelType::SPACE_TO_BATCH ||
-        o.GetType() != KernelType::SPACE_TO_BATCH) {
+bool SpaceToBatchKernelBase::Validate(const Params& p) const {
+    if (p.GetType() != KernelType::SPACE_TO_BATCH) {
         return false;
     }
 
@@ -26,7 +25,7 @@ bool SpaceToBatchKernelBase::Validate(const Params& p, const optional_params& o)
     return true;
 }
 
-CommonDispatchData SpaceToBatchKernelBase::SetDefault(const space_to_batch_params& params, const optional_params&) const {
+CommonDispatchData SpaceToBatchKernelBase::SetDefault(const space_to_batch_params& params) const {
     const auto& out = params.outputs[0];
     auto in_layout = params.inputs[0].GetLayout();
     auto out_layout = params.outputs[0].GetLayout();
@@ -46,6 +45,10 @@ CommonDispatchData SpaceToBatchKernelBase::SetDefault(const space_to_batch_param
     }
 
     return dispatchData;
+}
+
+inline std::string GetInputTypeStr(size_t idx) {
+    return "INPUT" + std::to_string(idx) + "_TYPE";
 }
 
 JitConstants SpaceToBatchKernelBase::GetJitConstants(const space_to_batch_params& params) const {
@@ -70,30 +73,48 @@ JitConstants SpaceToBatchKernelBase::GetJitConstants(const space_to_batch_params
         }
     };
 
-    makeJitConstForParam(jit, "BLOCK_SHAPE", params.block_shape, 1);
-    makeJitConstForParam(jit, "PADS_BEGIN", params.pads_begin, 0);
-    makeJitConstForParam(jit, "PADS_END", params.pads_end, 0);
+    if (params.block_type == base_params::ArgType::Input) {
+        jit.AddConstant(MakeJitConstant("BLOCK_TYPE", GetInputTypeStr(params.block_input_index)));
+        jit.AddConstant(MakeJitConstant("BLOCK_DIMS", params.block_dims));
+    } else {
+        makeJitConstForParam(jit, "BLOCK_SHAPE", params.block_shape, 1);
+    }
+
+    if (params.begin_type == base_params::ArgType::Input) {
+        jit.AddConstant(MakeJitConstant("BEGIN_TYPE", GetInputTypeStr(params.begin_input_index)));
+        jit.AddConstant(MakeJitConstant("BEGIN_DIMS", params.begin_dims));
+    } else {
+        makeJitConstForParam(jit, "PADS_BEGIN", params.pads_begin, 0);
+    }
+
+    if (params.end_type == base_params::ArgType::Input) {
+        jit.AddConstant(MakeJitConstant("END_TYPE", GetInputTypeStr(params.end_input_index)));
+        jit.AddConstant(MakeJitConstant("END_DIMS", params.end_dims));
+    } else {
+        makeJitConstForParam(jit, "PADS_END", params.pads_end, 0);
+    }
 
     return jit;
 }
 
-KernelsData SpaceToBatchKernelBase::GetCommonKernelsData(const Params& params, const optional_params& options) const {
+KernelsData SpaceToBatchKernelBase::GetCommonKernelsData(const Params& params) const {
     KernelData kd = KernelData::Default<space_to_batch_params>(params);
     space_to_batch_params& newParams = *static_cast<space_to_batch_params*>(kd.params.get());
 
-    if (!Validate(params, options)) {
+    if (!Validate(params)) {
         return {};
     }
 
-    auto dispatchData = SetDefault(newParams, options);
-    auto entry_point = GetEntryPoint(kernelName, newParams.layerID, params, options);
+    auto dispatchData = SetDefault(newParams);
+    auto entry_point = GetEntryPoint(kernelName, newParams.layerID, params);
     auto cldnn_jit = GetJitConstants(newParams);
     auto jit = CreateJit(kernelName, cldnn_jit, entry_point);
 
     auto& kernel = kd.kernels[0];
 
     FillCLKernelData(kernel, dispatchData, params.engineInfo, kernelName, jit, entry_point,
-                     "", false, false, 1, GetFusedPrimitiveInputsCount(params));
+                     "", false, false, static_cast<int>(newParams.inputs.size()),
+                     GetFusedPrimitiveInputsCount(params), 1, newParams.is_shape_agnostic);
 
     return { kd };
 }

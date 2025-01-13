@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -9,6 +9,7 @@
 
 #include "cache/lru_cache.h"
 #include "cache/multi_cache.h"
+#include "common_test_utils/test_assertions.hpp"
 
 using namespace ov::intel_cpu;
 
@@ -29,30 +30,30 @@ TEST(LruCacheTests, Evict) {
     constexpr size_t capacity = 10;
     LruCache<IntKey, int> cache(capacity);
     for (size_t i = 0; i < 2 * capacity; ++i) {
-        ASSERT_NO_THROW(cache.put({10}, 10));
+        OV_ASSERT_NO_THROW(cache.put({10}, 10));
     }
-    ASSERT_NO_THROW(cache.evict(5));
-    ASSERT_NO_THROW(cache.evict(10));
+    OV_ASSERT_NO_THROW(cache.evict(5));
+    OV_ASSERT_NO_THROW(cache.evict(10));
     int result = cache.get({10});
     ASSERT_EQ(result, int());
-    ASSERT_NO_THROW(cache.evict(0));
+    OV_ASSERT_NO_THROW(cache.evict(0));
 }
 
 TEST(LruCacheTests, Put) {
     constexpr size_t capacity = 10;
     LruCache<IntKey, int> cache(capacity);
     for (size_t i = 0; i < 2 * capacity; ++i) {
-        ASSERT_NO_THROW(cache.put({10}, 10));
+        OV_ASSERT_NO_THROW(cache.put({10}, 10));
     }
 
     ASSERT_EQ(cache.get({10}), 10);
 }
 
 TEST(LruCacheTests, Get) {
-    constexpr size_t capacity = 10;
+    constexpr int capacity = 10;
     LruCache<IntKey, int> cache(capacity);
     for (int i = 1; i < 2 * capacity; ++i) {
-        ASSERT_NO_THROW(cache.put({i}, i));
+        OV_ASSERT_NO_THROW(cache.put({i}, i));
     }
 
     for (int i = 1; i < capacity; ++i) {
@@ -65,10 +66,10 @@ TEST(LruCacheTests, Get) {
 }
 
 TEST(LruCacheTests, LruPolicy) {
-    constexpr size_t capacity = 10;
+    constexpr int capacity = 10;
     LruCache<IntKey, int> cache(capacity);
     for (int i = 1; i < capacity; ++i) {
-        ASSERT_NO_THROW(cache.put({i}, i));
+        OV_ASSERT_NO_THROW(cache.put({i}, i));
     }
 
     for (int i = 4; i < capacity; ++i) {
@@ -76,7 +77,7 @@ TEST(LruCacheTests, LruPolicy) {
     }
 
     for (int i = 21; i < 25; ++i) {
-        ASSERT_NO_THROW(cache.put({i}, i));
+        OV_ASSERT_NO_THROW(cache.put({i}, i));
     }
 
     for (int i = 1; i < 4; ++i) {
@@ -86,10 +87,10 @@ TEST(LruCacheTests, LruPolicy) {
 
 TEST(LruCacheTests, Empty) {
     constexpr size_t capacity = 0;
-    constexpr size_t attempts = 10;
+    constexpr int attempts = 10;
     LruCache<IntKey, int> cache(capacity);
     for (int i = 1; i < attempts; ++i) {
-        ASSERT_NO_THROW(cache.put({i}, i));
+        OV_ASSERT_NO_THROW(cache.put({i}, i));
     }
 
     for (int i = 1; i < attempts; ++i) {
@@ -108,7 +109,7 @@ TEST(CacheEntryTests, GetOrCreate) {
     using testing::_;
     using ValueType = std::shared_ptr<int>;
 
-    constexpr size_t capacity = 10;
+    constexpr int capacity = 10;
 
     mockBuilder<ValueType::element_type, IntKey> builderMock;
     EXPECT_CALL(builderMock, build(_))
@@ -157,7 +158,7 @@ TEST(CacheEntryTests, Empty) {
     using ValueType = std::shared_ptr<int>;
 
     constexpr size_t capacity = 0;
-    constexpr size_t attempts = 10;
+    constexpr int attempts = 10;
 
     mockBuilder<ValueType::element_type, IntKey> builderMock;
     EXPECT_CALL(builderMock, build(_))
@@ -203,7 +204,7 @@ TEST(MultiCacheTests, GetOrCreate) {
     using IntValueType = std::shared_ptr<int>;
     using StrValueType = std::shared_ptr<std::string>;
 
-    constexpr size_t capacity = 10;
+    constexpr int capacity = 10;
 
     mockBuilder<IntValueType::element_type, IntKey> intBuilderMock;
     EXPECT_CALL(intBuilderMock, build(_))
@@ -275,7 +276,7 @@ TEST(MultiCacheTests, Empty) {
     using StrValueType = std::shared_ptr<std::string>;
 
     constexpr size_t capacity = 0;
-    constexpr size_t attempts = 10;
+    constexpr int attempts = 10;
 
     mockBuilder<IntValueType::element_type, IntKey> intBuilderMock;
     EXPECT_CALL(intBuilderMock, build(_))
@@ -339,7 +340,7 @@ TEST(MultiCacheTests, SmokeTypeIdSync) {
     using IntValueType = std::shared_ptr<int>;
     using StrValueType = std::shared_ptr<std::string>;
 
-    constexpr size_t capacity = 10;
+    constexpr int capacity = 10;
     constexpr size_t numThreads = 30;
 
     auto intBuilder = [&](const IntKey& key) { return std::make_shared<int>(key.data); };

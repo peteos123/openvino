@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -7,7 +7,9 @@
 #include "openvino/core/node.hpp"
 #include "openvino/op/tensor_iterator.hpp"
 #include "openvino/op/util/sub_graph_base.hpp"
+#include "pyopenvino/core/common.hpp"
 #include "pyopenvino/graph/ops/util/multisubgraph.hpp"
+#include "pyopenvino/utils/utils.hpp"
 
 namespace py = pybind11;
 
@@ -17,7 +19,13 @@ void regclass_graph_op_TensorIterator(py::module m) {
         "tensor_iterator");
     cls.doc() = "openvino.impl.op.TensorIterator wraps ov::op::v0::TensorIterator";
     cls.def(py::init<>());
-    cls.def("set_body", &ov::op::v0::TensorIterator::set_body, py::arg("body"));
+    cls.def(
+        "set_body",
+        [](const std::shared_ptr<ov::op::v0::TensorIterator>& self, py::object& ie_api_model) {
+            const auto body = Common::utils::convert_to_model(ie_api_model);
+            self->set_body(body);
+        },
+        py::arg("body"));
     cls.def("set_invariant_input",
             &ov::op::v0::TensorIterator::set_invariant_input,
             py::arg("body_parameter"),
@@ -54,16 +62,21 @@ void regclass_graph_op_TensorIterator(py::module m) {
             py::arg("successive_value"));
 
     cls.def("get_body", [](const std::shared_ptr<ov::op::v0::TensorIterator>& self) {
-        return self->get_body();
+        auto model = self->get_body();
+        py::type model_class = py::module_::import("openvino.runtime").attr("Model");
+        return model_class(py::cast(model));
     });
 
     cls.def("get_function", [](const std::shared_ptr<ov::op::v0::TensorIterator>& self) {
-        return self->get_function();
+        auto model = self->get_function();
+        py::type model_class = py::module_::import("openvino.runtime").attr("Model");
+        return model_class(py::cast(model));
     });
 
     cls.def(
         "set_function",
-        [](const std::shared_ptr<ov::op::v0::TensorIterator>& self, const std::shared_ptr<ov::Model>& func) {
+        [](const std::shared_ptr<ov::op::v0::TensorIterator>& self, const py::object& ie_api_model) {
+            const auto func = Common::utils::convert_to_model(ie_api_model);
             self->set_function(func);
         },
         py::arg("func"));
@@ -101,4 +114,15 @@ void regclass_graph_op_TensorIterator(py::module m) {
             self->set_output_descriptions(0, MultiSubgraphHelpers::list_to_output_descriptor(outputs));
         },
         py::arg("outputs"));
+
+    cls.def("__repr__", [](const ov::op::v0::TensorIterator& self) {
+        std::stringstream shapes_ss;
+        for (size_t i = 0; i < self.get_output_size(); ++i) {
+            if (i > 0) {
+                shapes_ss << ", ";
+            }
+            shapes_ss << self.get_output_partial_shape(i);
+        }
+        return "<" + Common::get_class_name(self) + ": '" + self.get_friendly_name() + "' (" + shapes_ss.str() + ")>";
+    });
 }

@@ -1,14 +1,10 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "internal/op/while.hpp"
 
 #include <algorithm>
-#include <ngraph/validation_util.hpp>
-
-#include "ngraph/op/constant.hpp"
-#include "openvino/op/util/precision_sensitive_attribute.hpp"
 
 using namespace std;
 using namespace ov;
@@ -32,7 +28,7 @@ bool op::internal::While::visit_attributes(AttributeVisitor& visitor) {
 }
 
 void op::internal::While::validate_and_infer_types() {
-    for (auto i = 0; i < m_output_infos.size(); i++) {
+    for (size_t i = 0; i < m_output_infos.size(); i++) {
         set_output_type(i, m_output_infos[i].first, m_output_infos[i].second);
     }
 }

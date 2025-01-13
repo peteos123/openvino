@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -27,6 +27,7 @@ ParamsKey ScatterNDUpdateKernelRef::GetSupportedKey() const {
     k.EnableTensorPitches();
     k.EnableBatching();
     k.EnableDifferentTypes();
+    k.EnableDynamicShapesSupport();
     return k;
 }
 
@@ -44,7 +45,7 @@ static inline std::vector<std::string> GetDefaultOrder(size_t size) {
 }
 
 ScatterNDUpdateKernelRef::DispatchData
-ScatterNDUpdateKernelRef::SetDefault(const scatter_nd_update_params& params, const optional_params&, bool is_second) const {
+ScatterNDUpdateKernelRef::SetDefault(const scatter_nd_update_params& params, bool is_second) const {
     DispatchData dispatchData;
 
     if (!is_second) {
@@ -86,23 +87,26 @@ JitConstants ScatterNDUpdateKernelRef::GetJitConstants(const scatter_nd_update_p
     return jit;
 }
 
-bool ScatterNDUpdateKernelRef::Validate(const Params& p, const optional_params& o) const {
-    if (p.GetType() != KernelType:: SCATTER_ND_UPDATE || o.GetType() != KernelType::SCATTER_ND_UPDATE) {
+bool ScatterNDUpdateKernelRef::Validate(const Params& p) const {
+    if (p.GetType() != KernelType:: SCATTER_ND_UPDATE) {
         return false;
     }
 
     const scatter_nd_update_params& params = static_cast<const scatter_nd_update_params&>(p);
-    auto input_dims = params.inputs[0].LogicalDims();
-    auto indices_dims = params.inputs[1].LogicalDims();
-    std::reverse(indices_dims.begin(), indices_dims.end());
 
     auto indices_rank = params.indices_rank;
     if (indices_rank < 1) {
         return false;
     }
 
-    if (indices_dims[indices_rank - 1] > input_dims.size()) {
-        return false;
+    if (!params.has_dynamic_inputs()) {
+        auto input_dims = params.inputs[0].LogicalDims();
+        auto indices_dims = params.inputs[1].LogicalDims();
+        std::reverse(indices_dims.begin(), indices_dims.end());
+
+        if (indices_dims[indices_rank - 1] > input_dims.size()) {
+            return false;
+        }
     }
 
     for (auto& fused_op : params.fused_ops) {
@@ -113,30 +117,61 @@ bool ScatterNDUpdateKernelRef::Validate(const Params& p, const optional_params& 
     return true;
 }
 
-static std::string GetInputBlockND(const scatter_nd_update_params& params, int num, const int rank) {
+static std::string GetInputBlockND(const scatter_nd_update_params& params, size_t num, size_t shape_info_offset, size_t rank) {
     const auto& input = params.inputs[num];
+
     auto input_dims = input.LogicalDims();
     std::reverse(input_dims.begin(), input_dims.end());
+    auto dims = input.GetDims();
+    std::reverse(dims.begin(), dims.end());
+
     std::vector<size_t> block_nd(rank + 1);
     block_nd[rank] = 1;
-    for (int idx = (rank - 1); idx >= 0; idx--) {
+
+    std::vector<std::string> block_nd_s(rank + 1);
+    block_nd_s[rank] = "1";
+    size_t input_offset = shape_info_offset;
+
+    for (int32_t idx = static_cast<int32_t>(rank) - 1; idx >= 0; --idx) {
         block_nd[idx] = input_dims[idx] * block_nd[idx + 1];
+
+        size_t dim_offset = idx < 2 ? idx : (DataTensor::max_rank() - dims.size()) + idx; // convert to idx in default planar format
+        block_nd_s[idx] = "(" + toCodeString(dims[idx], input_offset + dim_offset) + "*" + block_nd_s[idx + 1] + ")";
     }
 
-    std::stringstream s;
-    for (int i = 0; i < (rank + 1); i++) {
-        if (i < rank) {
-            s << block_nd[i] << ",";
-        } else {
-            s << block_nd[i];
+    std::string result;
+    if (input.is_dynamic()) {
+        for (auto& block : block_nd_s) {
+            result += block + ",";
+        }
+    } else {
+        for (size_t block : block_nd) {
+            result += toCodeString(block) + ",";
         }
     }
-    auto str_result = s.str();
-    return str_result;
+    return result;
 }
 
-KernelsData ScatterNDUpdateKernelRef::GetKernelsData(const Params& params, const optional_params& options) const {
-    if (!Validate(params, options)) {
+void ScatterNDUpdateKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
+    kd.update_dispatch_data_func = [this](const Params& params, KernelData& kd) {
+        const auto& prim_params = static_cast<const scatter_nd_update_params&>(params);
+        OPENVINO_ASSERT(kd.kernels.size() == 2, "[GPU] Invalid kernels size for update dispatch data func");
+
+        for (size_t i = 0; i < 2; ++i) {
+            auto dispatchData = SetDefault(prim_params, (i == 1));
+            kd.kernels[i].params.workGroups.global = dispatchData.gws;
+            kd.kernels[i].params.workGroups.local = dispatchData.lws;
+            kd.kernels[i].skip_execution = KernelData::SkipKernelExecution(prim_params);
+
+            // Do not skip copy stage if output buffer is not empty or requires modification
+            if (i == 0 && prim_params.outputs[0].LogicalSize() != 0 && prim_params.outputs[0] != prim_params.inputs[0])
+                kd.kernels[i].skip_execution = false;
+        }
+    };
+}
+
+KernelsData ScatterNDUpdateKernelRef::GetKernelsData(const Params& params) const {
+    if (!Validate(params)) {
         return {};
     }
 
@@ -144,27 +179,50 @@ KernelsData ScatterNDUpdateKernelRef::GetKernelsData(const Params& params, const
     scatter_nd_update_params& newParams = *static_cast<scatter_nd_update_params*>(kd.params.get());
     auto cldnn_jit = GetJitConstants(newParams);
 
+    GetUpdateDispatchDataFunc(kd);
+
     // First iter - copy input data to output data
     // Second iter - update values specified by updates at specific index position specified by indices
     for (int i = 0; i < 2; i++) {
-        auto dispatchData = SetDefault(newParams, options, (i == 1));
-        auto entry_point = GetEntryPoint(kernelName, newParams.layerID, params, options, i);
+        auto dispatchData = SetDefault(newParams, (i == 1));
+        auto entry_point = GetEntryPoint(kernelName, newParams.layerID, params, i);
+        auto inputs_number = i == 0 ? 1 : 3;
 
         if (i == 1) {
-            int input0_rank = static_cast<int>(newParams.inputs[0].LogicalDims().size());
-            int input2_rank = static_cast<int>(newParams.inputs[2].LogicalDims().size());
+            size_t input0_rank = newParams.inputs[0].LogicalDims().size();
+            size_t input2_rank = newParams.inputs[2].LogicalDims().size();
             cldnn_jit.AddConstant(MakeJitConstant("IS_SECOND_ITER", "true"));
-            cldnn_jit.AddConstant(MakeJitConstant("INDICES_LAST_DIM", dispatchData.indicesLastDim));
-            cldnn_jit.AddConstant(MakeJitConstant("INPUT0_BLOCK_ND", GetInputBlockND(newParams, 0, input0_rank)));
-            cldnn_jit.AddConstant(MakeJitConstant("INPUT1_BLOCK_ND", GetInputBlockND(newParams, 1, newParams.indices_rank - 1)));
-            cldnn_jit.AddConstant(MakeJitConstant("INPUT2_BLOCK_ND", GetInputBlockND(newParams, 2, input2_rank)));
+            cldnn_jit.AddConstant(MakeJitConstant(
+                "INPUT0_BLOCK_ND",
+                GetInputBlockND(newParams, 0, newParams.inputs[0].get_dynamic_shape_offset(), input0_rank)));
+            cldnn_jit.AddConstant(MakeJitConstant(
+                "INPUT1_BLOCK_ND",
+                GetInputBlockND(newParams, 1, newParams.inputs[1].get_dynamic_shape_offset(), newParams.indices_rank - 1)));
+            cldnn_jit.AddConstant(MakeJitConstant(
+                "INPUT2_BLOCK_ND",
+                GetInputBlockND(newParams, 2, newParams.inputs[2].get_dynamic_shape_offset(), input2_rank)));
+
             cldnn_jit.AddConstant(MakeJitConstant("INDICES_RANK", newParams.indices_rank));
+
+            const auto& ind_input = newParams.inputs[1];
+            if (ind_input.is_dynamic()) {
+                auto dims = ind_input.GetDims();
+                std::reverse(dims.begin(), dims.end());
+
+                size_t last_idx = newParams.indices_rank - 1;
+                size_t dim_offset = last_idx < 2 ? last_idx : last_idx + DataTensor::max_rank() - newParams.indices_rank;
+                auto indices_last_dim = toCodeString(dims[last_idx], dim_offset + (newParams.inputs[0].is_dynamic() ? DataTensor::max_rank() : 0));
+                cldnn_jit.AddConstant(MakeJitConstant("INDICES_LAST_DIM", indices_last_dim));
+            } else {
+                cldnn_jit.AddConstant(MakeJitConstant("INDICES_LAST_DIM", dispatchData.indicesLastDim));
+            }
         }
         std::pair<std::string, std::string> jit = CreateJit(kernelName, cldnn_jit, entry_point);
 
         clKernelData& kernel = kd.kernels[i];
 
-        FillCLKernelData(kernel, dispatchData, params.engineInfo, kernelName, jit, entry_point, "", false, false, 3, GetFusedPrimitiveInputsCount(params));
+        FillCLKernelData(kernel, dispatchData, params.engineInfo, kernelName, jit, entry_point,
+                         "", false, false, inputs_number, GetFusedPrimitiveInputsCount(params), 1, newParams.is_shape_agnostic);
     }
 
     return {kd};

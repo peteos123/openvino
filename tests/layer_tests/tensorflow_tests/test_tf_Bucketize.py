@@ -1,93 +1,70 @@
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
+import platform
 import pytest
 import tensorflow as tf
-from common.layer_test_class import check_ir_version
 from common.tf_layer_test_class import CommonTFLayerTest
+from common.utils.tf_utils import mix_array_with_several_values
 
-from unit_tests.utils.graph import build_graph
+rng = np.random.default_rng(3476123)
 
 
 class TestBucketize(CommonTFLayerTest):
-    def create_bucketize_net(self, input_shape, input_type, boundaries_size, ir_version,
-                             use_new_frontend):
-        """
-            Tensorflow net:                     IR net:
-                 Input            =>      Input        Boundaries
-                   |                           \       /
-               Bucketize                       Bucketize
-           {attrs: boundaries}
-        """
+    def _prepare_input(self, inputs_info):
+        assert 'input:0' in inputs_info, "inputs_info must contain `input`"
+        input_shape = inputs_info['input:0']
+        input_type = self.input_type
+        boundaries = self.boundaries
+
+        # compute all preferable values that is good to see
+        all_prefer_values = []
+        boundaries_size = len(boundaries)
+        for ind in range(boundaries_size):
+            if ind == 0:
+                all_prefer_values.append(boundaries[ind] - 1.0)
+            else:
+                all_prefer_values.append((boundaries[ind - 1] + boundaries[ind]) / 2.0)
+            all_prefer_values.append(boundaries[ind])
+            if ind == (boundaries_size - 1):
+                all_prefer_values.append(boundaries[ind] + 1.0)
+
+        inputs_data = {}
+        input_data = rng.choice(200, input_shape).astype(input_type) - 100
+        # mix input data with preferable values
+        input_data = mix_array_with_several_values(input_data, all_prefer_values, rng)
+        inputs_data['input:0'] = input_data
+        return inputs_data
+
+    def create_bucketize_net(self, input_shape, input_type, boundaries_size):
+        self.input_type = input_type
+        # generate boundaries list
+        # use wider range for boundaries than input data in order to cover all bucket indices cases
+        boundaries = (np.sort(rng.choice(400, boundaries_size, replace=False).astype(np.float32) - 200)).tolist()
+        self.boundaries = boundaries
 
         tf.compat.v1.reset_default_graph()
         with tf.compat.v1.Session() as sess:
-            x = tf.compat.v1.placeholder(input_type, input_shape, 'Input')
-            constant_value = np.arange(-boundaries_size * 5, boundaries_size * 5, 10,
-                                       dtype=np.float32)
-            # TODO: Bucketize is not tested here. Need to re-write the test
+            input = tf.compat.v1.placeholder(input_type, input_shape, 'input')
+            tf.raw_ops.Bucketize(input=input, boundaries=boundaries)
             tf.compat.v1.global_variables_initializer()
             tf_net = sess.graph_def
 
-        # create reference IR net
-        ref_net = None
+        return tf_net, None
 
-        if check_ir_version(10, None, ir_version) and not use_new_frontend:
-            nodes_attributes = {
-                'input': {'kind': 'op', 'type': 'Parameter'},
-                'input_data': {'shape': input_shape, 'kind': 'data'},
-                'boundaries_input_data': {'shape': constant_value.shape, 'kind': 'data'},
-                'boundaries': {'type': 'Const', 'kind': 'op'},
-                'boundaries_data': {'kind': 'data', 'shape': constant_value.shape},
-                'bucketize': {'kind': 'op', 'type': 'Bucketize'},
-                'bucketize_data': {'shape': input_shape, 'kind': 'data'},
-                'result': {'kind': 'op', 'type': 'Result'}
-            }
-
-            ref_net = build_graph(nodes_attributes,
-                                  [('input', 'input_data'),
-                                   ('input_data', 'bucketize', {'in': 0}),
-                                   ('boundaries_input_data', 'boundaries'),
-                                   ('boundaries', 'boundaries_data'),
-                                   ('boundaries_data', 'bucketize', {'in': 1}),
-                                   ('bucketize', 'bucketize_data'),
-                                   ('bucketize_data', 'result')
-                                   ])
-
-        return tf_net, ref_net
-
-    test_data_float32 = [
-        dict(input_shape=[5], input_type=tf.float32, boundaries_size=1),
-        dict(input_shape=[5], input_type=tf.float32, boundaries_size=3),
-        pytest.param(dict(input_shape=[4, 8], input_type=tf.float32, boundaries_size=5),
-                     marks=pytest.mark.precommit_tf_fe),
-        dict(input_shape=[2, 4, 7], input_type=tf.float32, boundaries_size=10),
-        dict(input_shape=[2, 4, 7, 8], input_type=tf.float32, boundaries_size=12),
-        dict(input_shape=[2, 4, 7, 8, 10], input_type=tf.float32, boundaries_size=14)]
-
-    @pytest.mark.parametrize("params", test_data_float32)
+    @pytest.mark.parametrize('input_shape', [[], [5], [3, 4], [2, 3, 4]])
+    @pytest.mark.parametrize('input_type', [np.int32, np.int64, np.float32, np.float64])
+    @pytest.mark.parametrize('boundaries_size', [0, 1, 10, 200])
+    @pytest.mark.precommit
     @pytest.mark.nightly
-    def test_bucketize_float32(self, params, ie_device, precision, ir_version, temp_dir,
-                               use_new_frontend, use_old_api):
-        self._test(*self.create_bucketize_net(**params, ir_version=ir_version,
-                                              use_new_frontend=use_new_frontend),
+    def test_bucketize(self, input_shape, input_type, boundaries_size,
+                       ie_device, precision, ir_version, temp_dir,
+                       use_legacy_frontend):
+        if ie_device == 'GPU' and boundaries_size == 0:
+            pytest.skip("152562: sporadic accuracy issue for boundaries_size == 0 on GPU")
+        if platform.machine() in ["aarch64", "arm64", "ARM64"] and boundaries_size == 0:
+            pytest.skip("149853: segmentation fault or signal 11 for boundaries_size == 0 on CPU")
+        self._test(*self.create_bucketize_net(input_shape, input_type, boundaries_size),
                    ie_device, precision, ir_version, temp_dir=temp_dir,
-                   use_new_frontend=use_new_frontend, use_old_api=use_old_api)
-
-    test_data_int32 = [
-        dict(input_shape=[5], input_type=tf.int32, boundaries_size=1),
-        dict(input_shape=[5], input_type=tf.int32, boundaries_size=3),
-        dict(input_shape=[4, 8], input_type=tf.int32, boundaries_size=5),
-        dict(input_shape=[2, 4, 7], input_type=tf.int32, boundaries_size=10),
-        dict(input_shape=[2, 4, 7, 8], input_type=tf.float32, boundaries_size=12),
-        dict(input_shape=[2, 4, 7, 8, 10], input_type=tf.float32, boundaries_size=14)]
-
-    @pytest.mark.parametrize("params", test_data_int32)
-    @pytest.mark.nightly
-    def test_bucketize_int32(self, params, ie_device, precision, ir_version, temp_dir,
-                             use_new_frontend, use_old_api):
-        self._test(*self.create_bucketize_net(**params, ir_version=ir_version,
-                                              use_new_frontend=use_new_frontend),
-                   ie_device, precision, ir_version, temp_dir=temp_dir,
-                   use_new_frontend=use_new_frontend, use_old_api=use_old_api)
+                   use_legacy_frontend=use_legacy_frontend)

@@ -1,14 +1,12 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "primitive_base.hpp"
-#include "impls/implementation_map.hpp"
-#include "intel_gpu/runtime/error_handler.hpp"
-#include "kernel_selector_helper.h"
+
+#include "roi_align_inst.h"
 #include "roi_align/roi_align_kernel_ref.h"
 #include "roi_align/roi_align_kernel_selector.h"
-#include "roi_align_inst.h"
 
 namespace cldnn {
 namespace ocl {
@@ -41,12 +39,12 @@ struct roi_align_impl : typed_primitive_impl_ocl<roi_align> {
     using parent = typed_primitive_impl_ocl<roi_align>;
     using parent::parent;
     using kernel_selector_t = kernel_selector::roi_align_kernel_selector;
-    using kernel_params_t = std::pair<kernel_selector::roi_align_params, kernel_selector::roi_align_optional_params>;
+    using kernel_params_t = kernel_selector::roi_align_params;
 
-    DECLARE_OBJECT_TYPE_SERIALIZATION
+    DECLARE_OBJECT_TYPE_SERIALIZATION(cldnn::ocl::roi_align_impl)
 
     std::unique_ptr<primitive_impl> clone() const override {
-        return make_unique<roi_align_impl>(*this);
+        return make_deep_copy<roi_align_impl, kernel_params_t>(*this);
     }
 
 protected:
@@ -61,12 +59,10 @@ protected:
 public:
     static kernel_params_t get_kernel_params(const kernel_impl_params& impl_param) {
         const auto& primitive = impl_param.typed_desc<roi_align>();
-        const auto& input_layout = impl_param.get_input_layout(0);
         const auto& rois_layout = impl_param.get_input_layout(1);
         const auto& batches_layout = impl_param.get_input_layout(2);
 
         auto params = get_default_params<kernel_selector::roi_align_params>(impl_param);
-        auto optional_params = get_default_optional_params<kernel_selector::roi_align_optional_params>(impl_param.get_program());
 
         params.inputs.push_back(convert_data_tensor(rois_layout));
         params.inputs.push_back(convert_data_tensor(batches_layout));
@@ -74,8 +70,10 @@ public:
         params.aligned_mode = from(primitive->aligned_mode);
         params.sampling_ratio = primitive->sampling_ratio;
         params.spatial_scale = primitive->spatial_scale;
+        params.rotated_mode = primitive->roi_mode == roi_align::ROIMode::rotated;
+        params.clockwise = primitive->clockwise;
 
-        return {params, optional_params};
+        return params;
     }
 };
 
@@ -99,3 +97,4 @@ attach_roi_align_impl::attach_roi_align_impl() {
 }  // namespace cldnn
 
 BIND_BINARY_BUFFER_WITH_TYPE(cldnn::ocl::roi_align_impl)
+BIND_BINARY_BUFFER_WITH_TYPE(cldnn::roi_align)

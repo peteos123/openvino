@@ -1,16 +1,12 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "one_hot_inst.h"
-
 #include "primitive_base.hpp"
-#include "impls/implementation_map.hpp"
-#include "kernel_selector_helper.h"
+
+#include "one_hot_inst.h"
 #include "one_hot/one_hot_kernel_selector.h"
 #include "one_hot/one_hot_kernel_base.h"
-#include "intel_gpu/runtime/error_handler.hpp"
-#include <vector>
 
 namespace cldnn {
 namespace ocl {
@@ -19,18 +15,17 @@ struct one_hot_impl : typed_primitive_impl_ocl<one_hot> {
     using parent = typed_primitive_impl_ocl<one_hot>;
     using parent::parent;
     using kernel_selector_t = kernel_selector::one_hot_kernel_selector;
-    using kernel_params_t = std::pair<kernel_selector::one_hot_params, kernel_selector::one_hot_optional_params>;
+    using kernel_params_t = kernel_selector::one_hot_params;
 
-    DECLARE_OBJECT_TYPE_SERIALIZATION
+    DECLARE_OBJECT_TYPE_SERIALIZATION(cldnn::ocl::one_hot_impl)
 
     std::unique_ptr<primitive_impl> clone() const override {
-        return make_unique<one_hot_impl>(*this);
+        return make_deep_copy<one_hot_impl, kernel_params_t>(*this);
     }
 
     static kernel_params_t get_kernel_params(const kernel_impl_params& impl_param) {
         const auto& primitive = impl_param.typed_desc<one_hot>();
         auto params = get_default_params<kernel_selector::one_hot_params>(impl_param);
-        auto optional_params = get_default_optional_params<kernel_selector::one_hot_optional_params>(impl_param.get_program());
 
         params.one_hot_axis = primitive->one_hot_axis;
         params.on_value = primitive->on_value;
@@ -39,7 +34,7 @@ struct one_hot_impl : typed_primitive_impl_ocl<one_hot> {
         auto output_sizes = impl_param.get_output_layout().get_dims();
 
         params.one_hot_limit = output_sizes[params.one_hot_axis];
-        return {params, optional_params};
+        return params;
     }
 };
 
@@ -67,3 +62,4 @@ attach_one_hot_impl::attach_one_hot_impl() {
 }  // namespace cldnn
 
 BIND_BINARY_BUFFER_WITH_TYPE(cldnn::ocl::one_hot_impl)
+BIND_BINARY_BUFFER_WITH_TYPE(cldnn::one_hot)

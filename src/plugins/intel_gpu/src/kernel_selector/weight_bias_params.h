@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -17,6 +17,13 @@ struct weight_bias_params : public base_params {
     WeightsTensor weights;
     MultiDataTensor bias;
 
+    bool compressed = false;
+    bool has_decompression_zp = false;
+    bool scalar_zp = false;
+    float zp_value = 0.0f;
+    DataTensor decompression_scale;
+    DataTensor decompression_zero_point;
+
     ParamsKey GetParamsKey() const override;
 };
 
@@ -32,14 +39,6 @@ struct weight_bias_zero_point_params : public weight_bias_params {
 
     bool HasCompensation() const { return !compensation.empty(); }
     std::string to_cache_string_v2() const override;
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// weight_bias_optional_params
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-struct weight_bias_optional_params : optional_params {
-protected:
-    explicit weight_bias_optional_params(KernelType kt) : optional_params(kt) {}
 };
 
 }  // namespace kernel_selector

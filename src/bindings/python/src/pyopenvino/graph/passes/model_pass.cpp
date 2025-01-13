@@ -1,4 +1,4 @@
-// Copyright (C) 2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -8,6 +8,8 @@
 
 #include <openvino/pass/pass.hpp>
 #include <string>
+
+#include "pyopenvino/core/common.hpp"
 
 namespace py = pybind11;
 
@@ -44,4 +46,7 @@ void regclass_passes_ModelPass(py::module m) {
                    :return: True in case if Model was changed and False otherwise.
                    :rtype: bool
     )");
+    model_pass.def("__repr__", [](const ov::pass::ModelPass& self) {
+        return Common::get_simple_repr(self);
+    });
 }

@@ -1,12 +1,13 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
 #include <memory>
-#include <openvino/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
+
+#include "openvino/pass/matcher_pass.hpp"
+#include "transformations_visibility.hpp"
 
 using namespace std;
 
@@ -20,12 +21,6 @@ class TRANSFORMATIONS_API BatchNormDecomposition;
 
 class ov::pass::BatchNormDecomposition : public ov::pass::MatcherPass {
 public:
-    OPENVINO_RTTI("BatchNormDecomposition", "0");
+    OPENVINO_MATCHER_PASS_RTTI("BatchNormDecomposition");
     BatchNormDecomposition();
 };
-
-namespace ngraph {
-namespace pass {
-using ov::pass::BatchNormDecomposition;
-}  // namespace pass
-}  // namespace ngraph

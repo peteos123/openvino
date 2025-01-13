@@ -1,16 +1,18 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
+#include "openvino/op/variadic_split.hpp"
+
 #include "common_test_utils/test_assertions.hpp"
-#include "dimension_tracker.hpp"
-#include "gmock/gmock.h"
-#include "ngraph/ngraph.hpp"
-#include "sequnce_generator.hpp"
-#include "util/type_prop.hpp"
+#include "common_test_utils/type_prop.hpp"
+#include "openvino/core/validation_util.hpp"
+#include "openvino/op/broadcast.hpp"
+#include "openvino/op/shape_of.hpp"
+#include "sequence_generator.hpp"
 
 using namespace std;
-using namespace ngraph;
+using namespace ov;
 using namespace testing;
 
 using VSplitTypePropTestParam = std::tuple<PartialShape,          // Input shape
@@ -34,15 +36,18 @@ protected:
         return out;
     }
 
-    std::pair<std::vector<size_t>, std::vector<size_t>> make_in_exp_labels() const {
-        std::vector<size_t> in_labels;
-        std::generate_n(std::back_inserter(in_labels), p_shape.size(), ov::SeqGen<size_t>(10));
+    std::pair<ov::TensorSymbol, ov::TensorSymbol> make_in_exp_symbols() const {
+        ov::TensorSymbol in_symbols;
+        for (size_t i = 0; i < p_shape.size(); ++i)
+            in_symbols.push_back(std::make_shared<Symbol>());
 
-        auto exp_labels = in_labels;
-        const auto n_axis = normalize_axis("", axis, p_shape.rank());
-        exp_labels[n_axis] = ov::no_label;
+        auto exp_symbols = in_symbols;
+        const auto rank = p_shape.rank();
+        if (rank.is_static()) {
+            exp_symbols[ov::util::try_normalize_axis(axis, rank)] = nullptr;
+        }
 
-        return {in_labels, exp_labels};
+        return {in_symbols, exp_symbols};
     }
 
     int64_t axis;
@@ -90,9 +95,10 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST_P(VariadicSplitTest, dimension_propagation_axis_scalar) {
     constexpr auto dtype = element::i32;
-    const auto data = make_shared<op::Parameter>(dtype, p_shape);
-    const auto axis_node = make_shared<op::Constant>(element::i16, Shape{}, axis);
-    const auto lengths_node = std::make_shared<op::Constant>(element::i16, Shape{split_lengths.size()}, split_lengths);
+    const auto data = make_shared<ov::op::v0::Parameter>(dtype, p_shape);
+    const auto axis_node = make_shared<ov::op::v0::Constant>(element::i16, Shape{}, axis);
+    const auto lengths_node =
+        std::make_shared<ov::op::v0::Constant>(element::i16, Shape{split_lengths.size()}, split_lengths);
 
     const auto var_split = make_shared<op::v1::VariadicSplit>(data, axis_node, lengths_node);
 
@@ -103,9 +109,10 @@ TEST_P(VariadicSplitTest, dimension_propagation_axis_scalar) {
 
 TEST_P(VariadicSplitTest, dimension_propagation_axis_1d) {
     constexpr auto dtype = element::u64;
-    const auto data = make_shared<op::Parameter>(dtype, p_shape);
-    const auto axis_node = make_shared<op::Constant>(element::i32, Shape{1}, axis);
-    const auto lengths_node = std::make_shared<op::Constant>(element::i32, Shape{split_lengths.size()}, split_lengths);
+    const auto data = make_shared<ov::op::v0::Parameter>(dtype, p_shape);
+    const auto axis_node = make_shared<ov::op::v0::Constant>(element::i32, Shape{1}, axis);
+    const auto lengths_node =
+        std::make_shared<ov::op::v0::Constant>(element::i32, Shape{split_lengths.size()}, split_lengths);
 
     const auto var_split = make_shared<op::v1::VariadicSplit>(data, axis_node, lengths_node);
 
@@ -116,9 +123,10 @@ TEST_P(VariadicSplitTest, dimension_propagation_axis_1d) {
 
 TEST_P(VariadicSplitTest, use_default_ctor) {
     constexpr auto dtype = element::f32;
-    const auto param = make_shared<op::Parameter>(dtype, p_shape);
-    const auto axis_node = make_shared<op::Constant>(element::i64, Shape{}, axis);
-    const auto lengths_node = std::make_shared<op::Constant>(element::i64, Shape{split_lengths.size()}, split_lengths);
+    const auto param = make_shared<ov::op::v0::Parameter>(dtype, p_shape);
+    const auto axis_node = make_shared<ov::op::v0::Constant>(element::i64, Shape{}, axis);
+    const auto lengths_node =
+        std::make_shared<ov::op::v0::Constant>(element::i64, Shape{split_lengths.size()}, split_lengths);
 
     const auto var_split = make_shared<op::v1::VariadicSplit>();
     var_split->set_arguments(NodeVector{param, axis_node, lengths_node});
@@ -129,34 +137,36 @@ TEST_P(VariadicSplitTest, use_default_ctor) {
     EXPECT_THAT(get_output_partial_shapes(*var_split), ElementsAreArray(exp_shapes));
 }
 
-TEST_P(VariadicSplitTest, label_propagation) {
-    std::vector<size_t> in_labels, exp_labels;
-    std::tie(in_labels, exp_labels) = make_in_exp_labels();
+TEST_P(VariadicSplitTest, symbol_propagation) {
+    ov::TensorSymbol in_symbols, exp_symbols;
+    std::tie(in_symbols, exp_symbols) = make_in_exp_symbols();
 
-    set_shape_labels(p_shape, in_labels);
-    const auto data = make_shared<op::Parameter>(element::f32, p_shape);
-    const auto axis_node = make_shared<op::Constant>(element::i64, Shape{}, axis);
-    const auto lengths_node = std::make_shared<op::Constant>(element::i64, Shape{split_lengths.size()}, split_lengths);
+    set_shape_symbols(p_shape, in_symbols);
+    const auto data = make_shared<ov::op::v0::Parameter>(element::f32, p_shape);
+    const auto axis_node = make_shared<ov::op::v0::Constant>(element::i64, Shape{}, axis);
+    const auto lengths_node =
+        std::make_shared<ov::op::v0::Constant>(element::i64, Shape{split_lengths.size()}, split_lengths);
 
     const auto var_split = make_shared<op::v1::VariadicSplit>(data, axis_node, lengths_node);
     EXPECT_EQ(var_split->get_output_size(), split_lengths.size());
     EXPECT_THAT(
         var_split->outputs(),
-        Each(Property("Partial shape", &Output<Node>::get_partial_shape, ResultOf(get_shape_labels, exp_labels))));
+        Each(Property("Partial shape", &Output<Node>::get_partial_shape, ResultOf(get_shape_symbols, exp_symbols))));
 }
 
 class VariadicSplitBoundTest : public VariadicSplitTest {
 protected:
-    std::pair<std::vector<size_t>, std::vector<std::vector<size_t>>> make_in_exp_labels() const {
-        std::vector<size_t> in_labels;
-        std::generate_n(std::back_inserter(in_labels), p_shape.size(), ov::SeqGen<size_t>(8));
+    std::pair<ov::TensorSymbol, std::vector<ov::TensorSymbol>> make_in_exp_symbols() const {
+        ov::TensorSymbol in_symbols;
+        for (size_t i = 0; i < p_shape.size(); ++i)
+            in_symbols.push_back(std::make_shared<Symbol>());
 
-        std::vector<std::vector<size_t>> exp_labels;
+        std::vector<ov::TensorSymbol> exp_symbols;
 
-        auto label_it = in_labels.begin();
+        auto symbol_it = in_symbols.begin();
         for (auto split_length : split_lengths) {
             if (split_length == 0) {
-                exp_labels.emplace_back(std::vector<size_t>(1, ov::no_label));
+                exp_symbols.emplace_back(ov::TensorSymbol(1, nullptr));
             } else if (split_length == -1) {
                 split_length = std::accumulate(split_lengths.cbegin(),
                                                split_lengths.cend(),
@@ -164,17 +174,17 @@ protected:
                                                [](const int64_t& a, const int64_t& v) {
                                                    return (v != -1) ? a - v : a;
                                                });
-                exp_labels.emplace_back(label_it, label_it + split_length);
+                exp_symbols.emplace_back(symbol_it, symbol_it + split_length);
             } else {
-                exp_labels.emplace_back(label_it, label_it + split_length);
+                exp_symbols.emplace_back(symbol_it, symbol_it + split_length);
             }
-            label_it += split_length;
+            symbol_it += split_length;
         }
-        return {in_labels, exp_labels};
+        return {in_symbols, exp_symbols};
     }
 
     std::vector<PartialShape> out_shapes;
-    std::vector<std::vector<size_t>> out_labels;
+    std::vector<ov::TensorSymbol> out_symbols;
 };
 
 INSTANTIATE_TEST_SUITE_P(type_prop_bounds_propagate,
@@ -197,20 +207,20 @@ INSTANTIATE_TEST_SUITE_P(type_prop_bounds_propagate,
                                                 PartialShapes{{{2, 6}, 2}, {3, 5}, {1}})),
                          PrintToStringParamName());
 
-TEST_P(VariadicSplitBoundTest, propagate_label_and_dynamic_value) {
-    std::vector<size_t> in_labels;
-    std::vector<std::vector<size_t>> exp_labels;
-    std::tie(in_labels, exp_labels) = make_in_exp_labels();
-    set_shape_labels(p_shape, in_labels);
+TEST_P(VariadicSplitBoundTest, propagate_symbol_and_dynamic_value) {
+    ov::TensorSymbol in_symbols;
+    std::vector<ov::TensorSymbol> exp_symbols;
+    std::tie(in_symbols, exp_symbols) = make_in_exp_symbols();
+    set_shape_symbols(p_shape, in_symbols);
 
     constexpr auto et = element::i64;
-    const auto labeled_param = std::make_shared<op::Parameter>(et, p_shape);
-    const auto labeled_shape_of = std::make_shared<op::ShapeOf>(labeled_param);
+    const auto symboled_param = std::make_shared<ov::op::v0::Parameter>(et, p_shape);
+    const auto symboled_shape_of = std::make_shared<op::v0::ShapeOf>(symboled_param);
 
     const auto zero = std::vector<int64_t>{0};
     const auto axis_node = std::make_shared<op::v0::Constant>(et, Shape{}, zero);
-    const auto lengths_node = std::make_shared<op::Constant>(et, Shape{split_lengths.size()}, split_lengths);
-    const auto var_split = std::make_shared<op::v1::VariadicSplit>(labeled_shape_of, axis_node, lengths_node);
+    const auto lengths_node = std::make_shared<ov::op::v0::Constant>(et, Shape{split_lengths.size()}, split_lengths);
+    const auto var_split = std::make_shared<op::v1::VariadicSplit>(symboled_shape_of, axis_node, lengths_node);
 
     for (auto& output : var_split->outputs()) {
         const auto& bc = std::make_shared<op::v3::Broadcast>(
@@ -218,9 +228,9 @@ TEST_P(VariadicSplitBoundTest, propagate_label_and_dynamic_value) {
             output,
             "BIDIRECTIONAL");
         out_shapes.push_back(bc->get_output_partial_shape(0));
-        out_labels.push_back(get_shape_labels(bc->get_output_partial_shape(0)));
+        out_symbols.push_back(get_shape_symbols(bc->get_output_partial_shape(0)));
     }
 
     EXPECT_EQ(out_shapes, exp_shapes);
-    EXPECT_EQ(out_labels, exp_labels);
+    EXPECT_EQ(out_symbols, exp_symbols);
 }

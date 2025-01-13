@@ -1,28 +1,46 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "gtest/gtest.h"
-#include "ngraph/ngraph.hpp"
-#include "ngraph/op/util/attr_types.hpp"
-#include "ngraph/opsets/opset4.hpp"
-#include "util/visitor.hpp"
+#include "openvino/op/scatter_nd_update.hpp"
 
-using namespace ngraph;
-using ngraph::test::NodeBuilder;
-using ngraph::test::ValueMap;
+#include <gtest/gtest.h>
+
+#include "visitors/visitors.hpp"
+
+using namespace ov;
+using ov::test::NodeBuilder;
 
 TEST(attributes, scatter_nd_update) {
-    NodeBuilder::get_ops().register_factory<opset4::ScatterNDUpdate>();
+    NodeBuilder::opset().insert<ov::op::v3::ScatterNDUpdate>();
 
-    auto data = std::make_shared<op::Parameter>(element::f32, Shape{1000, 256, 10, 15});
-    auto indices = std::make_shared<op::Parameter>(element::i32, Shape{25, 125, 3});
-    auto updates = std::make_shared<op::Parameter>(element::f32, Shape{25, 125, 15});
+    auto data = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{1000, 256, 10, 15});
+    auto indices = std::make_shared<ov::op::v0::Parameter>(element::i32, Shape{25, 125, 3});
+    auto updates = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{25, 125, 15});
 
-    auto scatter = std::make_shared<opset4::ScatterNDUpdate>(data, indices, updates);
+    auto scatter = std::make_shared<ov::op::v3::ScatterNDUpdate>(data, indices, updates);
     NodeBuilder builder(scatter, {data, indices, updates});
-    EXPECT_NO_THROW(auto g_scatter = ov::as_type_ptr<opset4::ScatterNDUpdate>(builder.create()));
+    EXPECT_NO_THROW(auto g_scatter = ov::as_type_ptr<ov::op::v3::ScatterNDUpdate>(builder.create()));
 
     const auto expected_attr_count = 0;
     EXPECT_EQ(builder.get_value_map_size(), expected_attr_count);
+}
+
+TEST(attributes, scatter_nd_update_v15) {
+    NodeBuilder::opset().insert<ov::op::v15::ScatterNDUpdate>();
+
+    auto data = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{1000, 256, 10, 15});
+    auto indices = std::make_shared<ov::op::v0::Parameter>(element::i32, Shape{25, 125, 3});
+    auto updates = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{25, 125, 15});
+
+    auto scatter = std::make_shared<ov::op::v15::ScatterNDUpdate>(data,
+                                                                  indices,
+                                                                  updates,
+                                                                  op::v15::ScatterNDUpdate::Reduction::PROD);
+    NodeBuilder builder(scatter, {data, indices, updates});
+    const auto g_scatter = ov::as_type_ptr<ov::op::v15::ScatterNDUpdate>(builder.create());
+
+    const auto expected_attr_count = 1;
+    EXPECT_EQ(builder.get_value_map_size(), expected_attr_count);
+    EXPECT_EQ(g_scatter->get_reduction(), scatter->get_reduction());
 }

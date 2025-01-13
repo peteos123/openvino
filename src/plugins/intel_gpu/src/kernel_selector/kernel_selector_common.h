@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -18,6 +18,10 @@
 #define EXE_MODE_DEFAULT ""
 #define EXE_MODE_AGE_BASED "-cl-no-subgroup-ifp"
 #define EXE_MODE_NO_PRERA_SCH "-cl-intel-no-prera-scheduling"
+
+namespace micro {
+struct MicroKernelPackage;
+}  // namspace
 
 namespace kernel_selector {
 
@@ -42,6 +46,7 @@ namespace kernel_selector {
 
 std::string GetStringEnv(const char* varName);
 
+using KernelLanguage = cldnn::kernel_language;
 using KernelString = cldnn::kernel_string;
 using WorkGroupSizes = cldnn::work_group_sizes;
 using ScalarDescriptor = cldnn::scalar_desc;
@@ -64,33 +69,21 @@ struct KernelCode {
 struct clKernelData {
     KernelCode code;
     KernelParams params;
-};
+    std::vector<std::shared_ptr<micro::MicroKernelPackage>> micro_kernels;
+    bool skip_execution = false;
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// CPUKernel
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-struct CPUKernel {
-    virtual WeightsType GetExpectedInputType() = 0;
-    virtual WeightsLayout GetExpectedInputLayout() const { return WeightsLayout::oiyx; }
-    virtual void Execute(void* input, size_t input_size, void* output, size_t output_size) const = 0;
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// GenericKernelParams
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-struct GenericKernelParams {
-    enum class Engine { NONE, CPU, GPU };
-
-    Engine engine = Engine::NONE;
-    std::shared_ptr<clKernelData> clKernel;
-    std::shared_ptr<CPUKernel> cpuKernel;
+    void save(cldnn::BinaryOutputBuffer& ob) const;
+    void load(cldnn::BinaryInputBuffer& ib);
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // WeightsReorderParams
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-struct WeightsReorderParams : public GenericKernelParams {
+struct WeightsReorderParams {
+    WeightsTensor src;
     WeightsTensor dest;
+    bool rotate = false;
+    bool is_initialized = false;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -112,6 +105,25 @@ struct KernelData {
     int autoTuneIndex = -1;
 
     bool can_reuse_memory = true;
+    bool needs_sub_kernels_sync = true;
+
+    static bool SkipKernelExecution(const base_params& params, size_t kernel_id = 0) {
+        for (const auto& input : params.inputs) {
+            if (input.LogicalSize() == 0) {
+                return true;
+            }
+        }
+        for (const auto& output : params.outputs) {
+            if (output.LogicalSize() == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool SkipKernelExecution(const Params& params, size_t kernel_id = 0) {
+        return false;
+    }
 
     template <typename T>
     inline static KernelData Default(const Params& _params, size_t kernel_nums = 1) {
@@ -123,6 +135,11 @@ struct KernelData {
         kd.reorderInput = false;  // for KW
         kd.autoTuneIndex = -1;
         kd.can_reuse_memory = true;
+        kd.needs_sub_kernels_sync = true;
+
+        for (auto& kernel : kd.kernels) {
+            kernel.skip_execution = SkipKernelExecution(orgParams);
+        }
         return kd;
     }
 };

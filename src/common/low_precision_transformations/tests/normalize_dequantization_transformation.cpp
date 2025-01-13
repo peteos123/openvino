@@ -1,70 +1,77 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
+#include "layer_transformation.hpp"
+
+#include <string>
+#include <memory>
+
 #include <gtest/gtest.h>
 
-#include <low_precision/network_helper.hpp>
-#include <memory>
-#include <ngraph/opsets/opset1.hpp>
-#include <string>
-#include <transformations/init_node_info.hpp>
-#include <transformations/utils/utils.hpp>
+#include "transformations/utils/utils.hpp"
+#include "transformations/init_node_info.hpp"
+#include "openvino/opsets/opset1.hpp"
+#include "low_precision/network_helper.hpp"
 
-#include "common_test_utils/ngraph_test_utils.hpp"
-#include "layer_transformation.hpp"
-#include "lpt_ngraph_functions/normalize_dequantization_function.hpp"
+#include "common_test_utils/ov_test_utils.hpp"
 #include "simple_low_precision_transformer.hpp"
+#include "ov_lpt_models/normalize_dequantization.hpp"
 
 using namespace testing;
-using namespace ngraph::pass;
+using namespace ov::pass;
 
 class NormalizeDequantizationTestValues {
 public:
     class Actual {
     public:
-        ngraph::element::Type precisionBeforeDequantization;
-        ngraph::builder::subgraph::DequantizationOperations dequantization;
+        ov::element::Type precisionBeforeDequantization;
+        ov::builder::subgraph::DequantizationOperations dequantization;
     };
 
     class Expected {
     public:
-        ngraph::element::Type precisionBeforeDequantization;
-        ngraph::builder::subgraph::DequantizationOperations dequantization;
+        ov::element::Type precisionBeforeDequantization;
+        ov::builder::subgraph::DequantizationOperations dequantization;
     };
     TestTransformationParams params;
-    ngraph::Shape inputShape;
+    ov::Shape inputShape;
+    bool constantPath;
     Actual actual;
     Expected expected;
 };
 
-class NormalizeDequantizationTransformation : public LayerTransformation,
-                                              public testing::WithParamInterface<NormalizeDequantizationTestValues> {
+class NormalizeDequantizationTransformation : public LayerTransformation, public testing::WithParamInterface<NormalizeDequantizationTestValues> {
 public:
     void SetUp() override {
         const NormalizeDequantizationTestValues testValues = GetParam();
 
-        actualFunction = ngraph::builder::subgraph::NormalizeDequantizationFunction::getOriginal(
+        actualFunction = ov::builder::subgraph::NormalizeDequantizationFunction::getOriginal(
             testValues.actual.precisionBeforeDequantization,
             testValues.inputShape,
-            testValues.actual.dequantization);
+            testValues.actual.dequantization,
+            testValues.constantPath);
 
         const auto targetNode = actualFunction->get_output_op(0)->get_input_node_shared_ptr(0);
-        const auto dequantization = low_precision::NetworkHelper::getDequantization(targetNode);
-        low_precision::NetworkHelper::normalizeDequantization(dequantization);
+        const auto dequantization = ov::pass::low_precision::NetworkHelper::getDequantization(targetNode);
+        ov::pass::low_precision::NetworkHelper::normalizeDequantization(dequantization);
 
-        referenceFunction = ngraph::builder::subgraph::NormalizeDequantizationFunction::getOriginal(
+        referenceFunction = ov::builder::subgraph::NormalizeDequantizationFunction::getOriginal(
             testValues.expected.precisionBeforeDequantization,
             testValues.inputShape,
-            testValues.expected.dequantization);
+            testValues.expected.dequantization,
+            testValues.constantPath);
     }
 
     static std::string getTestCaseName(testing::TestParamInfo<NormalizeDequantizationTestValues> obj) {
         const NormalizeDequantizationTestValues testValues = obj.param;
 
         std::ostringstream result;
-        result << testValues.inputShape << "_" << testValues.actual.precisionBeforeDequantization << "_"
-               << testValues.actual.dequantization << "_" << testValues.expected.dequantization << "_";
+        result <<
+            testValues.inputShape << "_" <<
+            testValues.actual.precisionBeforeDequantization << "_" <<
+            testValues.actual.dequantization << "_" <<
+            testValues.expected.dequantization << "_";
 
         return result.str();
     }
@@ -76,66 +83,161 @@ TEST_P(NormalizeDequantizationTransformation, CompareFunctions) {
     ASSERT_TRUE(res.first) << res.second;
 }
 
+using Subtract = ov::builder::subgraph::DequantizationOperations::Subtract;
+using Multiply = ov::builder::subgraph::DequantizationOperations::Multiply;
+
 const std::vector<NormalizeDequantizationTestValues> testValues = {
     {
         LayerTransformation::createParamsU8I8(),
-        {1, 3, 16, 16},
+        { 1, 3, 16, 16 },
+        false,
         {
-            ngraph::element::f32,
-            {{},
-             {{7.f}, ngraph::element::f32, {1, 3, 16, 16}, true, 0},
-             {{10.f}, ngraph::element::f32, {1, 3, 16, 16}, true, 0}},
+            ov::element::f32,
+            {
+                {},
+                { {7.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 0 },
+                { {10.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 0 }
+            },
         },
-        {ngraph::element::f32,
-         {{},
-          {{7.f}, ngraph::element::f32, {1, 3, 16, 16}, true, 1},
-          {{10.0f}, ngraph::element::f32, {1, 3, 16, 16}, true, 1}}},
+        {
+            ov::element::f32,
+            {
+                {},
+                { {7.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 1},
+                {{10.0f}, ov::element::f32, {1, 3, 16, 16}, true, 1 }
+            }
+        },
     },
     {
         LayerTransformation::createParamsU8I8(),
-        {1, 3, 16, 16},
+        { 1, 3, 16, 16 },
+        false,
         {
-            ngraph::element::i32,
-            {{ngraph::element::f32},
-             {{7.f}, ngraph::element::f32, {1, 3, 16, 16}, true, 1},
-             {{10.f}, ngraph::element::f32, {1, 3, 16, 16}, true, 0}},
+            ov::element::i32,
+            {
+                {ov::element::f32},
+                { {7.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 1 },
+                { {10.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 0 }
+            },
         },
-        {ngraph::element::i32,
-         {{ngraph::element::f32},
-          {{7.f}, ngraph::element::f32, {1, 3, 16, 16}, true, 1},
-          {{10.0f}, ngraph::element::f32, {1, 3, 16, 16}, true, 1}}},
+        {
+            ov::element::i32,
+            {
+                { ov::element::f32 },
+                { {7.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 1 },
+                {{10.0f}, ov::element::f32, {1, 3, 16, 16}, true, 1 }
+            }
+        },
     },
     {
         LayerTransformation::createParamsU8I8(),
-        {1, 3, 16, 16},
+        { 1, 3, 16, 16 },
+        false,
         {
-            ngraph::element::u32,
-            {{ngraph::element::f32},
-             {{7.f}, ngraph::element::f32, {1, 3, 16, 16}, true, 0},
-             {{10.f}, ngraph::element::f32, {1, 3, 16, 16}, true, 1}},
+            ov::element::u32,
+            {
+                { ov::element::f32 },
+                { {7.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 0 },
+                { {10.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 1 }
+            },
         },
-        {ngraph::element::u32,
-         {{{ngraph::element::f32}},
-          {{7.f}, ngraph::element::f32, {1, 3, 16, 16}, true, 1},
-          {{10.0f}, ngraph::element::f32, {1, 3, 16, 16}, true, 1}}},
+        {
+            ov::element::u32,
+            {
+                { {ov::element::f32} },
+                { {7.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 1 },
+                {{10.0f}, ov::element::f32, {1, 3, 16, 16}, true, 1 }
+            }
+        },
     },
     {
         LayerTransformation::createParamsU8I8().setUpdatePrecisions(true),
-        {1, 3, 16, 16},
+        { 1, 3, 16, 16 },
+        false,
         {
-            ngraph::element::u32,
-            {{ngraph::element::f32},
-             {{7.f}, ngraph::element::f32, {1, 3, 16, 16}, true, 1},
-             {{10.f}, ngraph::element::f32, {1, 3, 16, 16}, true, 1}},
+            ov::element::u32,
+            {
+                { ov::element::f32 },
+                { {7.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 1 },
+                { {10.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 1 }
+            },
         },
-        {ngraph::element::u32,
-         {{ngraph::element::f32},
-          {{7.f}, ngraph::element::f32, {1, 3, 16, 16}, true, 1},
-          {{10.0f}, ngraph::element::f32, {1, 3, 16, 16}, true, 1}}},
+        {
+            ov::element::u32,
+            {
+                { ov::element::f32 },
+                { {7.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 1 },
+                {{10.0f}, ov::element::f32, {1, 3, 16, 16}, true, 1 }
+            }
+        },
+    },
+    {
+        LayerTransformation::createParamsU8I8(),
+        { 1, 3, 16, 16 },
+        true,
+        {
+            ov::element::f32,
+            {
+                {},
+                { {7.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 1 },
+                { {10.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 1 }
+            },
+        },
+        {
+            ov::element::f32,
+            {
+                {},
+                { {7.f}, ov::element::f32, { 1, 3, 16, 16 }, true, 1 },
+                { {10.0f}, ov::element::f32, { 1, 3, 16, 16 }, true, 1 }
+            }
+        },
+    },
+    {
+        LayerTransformation::createParamsU8I8(),
+        { 1, 3, 16, 16 },
+        true,
+        {
+            ov::element::i8,
+            {
+                {ov::element::f32},
+                Subtract({7.f}, ov::element::f32, { 1, 3, 16, 16 }).setConstantPrecision(ov::element::f16).setAddConvert(true),
+                Multiply({10.f}, ov::element::f32, { 1, 3, 16, 16 })
+            },
+        },
+        {
+            ov::element::i8,
+            {
+                {ov::element::f32},
+                Subtract({7.f}, ov::element::f32, { 1, 3, 16, 16 }).setConstantPrecision(ov::element::f16).setAddConvert(true),
+                Multiply({10.f}, ov::element::f32, { 1, 3, 16, 16 })
+            },
+        },
+    },
+    {
+        LayerTransformation::createParamsU8I8(),
+        { 1, 3, 16, 16 },
+        true,
+        {
+            ov::element::f32,
+            {
+                {},
+                Subtract({7.f}, ov::element::f32, { 1, 3, 16, 16 }).setConstantPrecision(ov::element::f16).setAddConvert(true),
+                Multiply({10.f}, ov::element::f32, { 1, 3, 16, 16 })
+            },
+        },
+        {
+            ov::element::f32,
+            {
+                {},
+                Subtract({7.f}, ov::element::f32, { 1, 3, 16, 16 }).setConstantPrecision(ov::element::f16).setAddConvert(true),
+                Multiply({10.f}, ov::element::f32, { 1, 3, 16, 16 })
+            },
+        },
     },
 };
 
-INSTANTIATE_TEST_SUITE_P(smoke_LPT,
-                         NormalizeDequantizationTransformation,
-                         ::testing::ValuesIn(testValues),
-                         NormalizeDequantizationTransformation::getTestCaseName);
+INSTANTIATE_TEST_SUITE_P(
+    smoke_LPT,
+    NormalizeDequantizationTransformation,
+    ::testing::ValuesIn(testValues),
+    NormalizeDequantizationTransformation::getTestCaseName);

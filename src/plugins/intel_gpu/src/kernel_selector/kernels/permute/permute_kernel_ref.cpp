@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -100,6 +100,7 @@ static std::string GetReorderedOutputOrder(const permute_params& params, const s
 
 ParamsKey PermuteKernelRef::GetSupportedKey() const {
     ParamsKey k;
+    k.EnableInputDataType(Datatype::BF16);
     k.EnableInputDataType(Datatype::F16);
     k.EnableInputDataType(Datatype::F32);
     k.EnableInputDataType(Datatype::INT8);
@@ -134,22 +135,31 @@ CommonDispatchData PermuteKernelRef::SetDefault(const permute_params& params) co
         std::vector<std::vector<Tensor::DataChannelName>> dims_by_gws = {{Tensor::DataChannelName::FEATURE},
                                                                         {Tensor::DataChannelName::X, Tensor::DataChannelName::Y},
                                                                         {Tensor::DataChannelName::Z, Tensor::DataChannelName::W,
+                                                                         Tensor::DataChannelName::U, Tensor::DataChannelName::V,
                                                                          Tensor::DataChannelName::BATCH}};
-        dispatchData.gws = {in.Feature().v, in.X().v * in.Y().v, in.Z().v * in.W().v * in.Batch().v};
+        dispatchData.gws = {in.Feature().v, in.X().v * in.Y().v, in.Z().v * in.W().v  * in.U().v  * in.V().v * in.Batch().v};
         dispatchData.lws = GetOptimalLocalWorkGroupSizes(dispatchData.gws, params.engineInfo, in_layout, out_layout, dims_by_gws);
     } else {
         std::vector<std::vector<Tensor::DataChannelName>> dims_by_gws = {{Tensor::DataChannelName::X},
-                                                                        {Tensor::DataChannelName::Y, Tensor::DataChannelName::Z, Tensor::DataChannelName::W},
+                                                                        {Tensor::DataChannelName::Y, Tensor::DataChannelName::Z, Tensor::DataChannelName::W,
+                                                                         Tensor::DataChannelName::U, Tensor::DataChannelName::V},
                                                                         {Tensor::DataChannelName::FEATURE, Tensor::DataChannelName::BATCH}};
-        dispatchData.gws = {in.X().v, in.Y().v * in.Z().v * in.W().v, in.Feature().v * in.Batch().v};
+        dispatchData.gws = {in.X().v, in.Y().v * in.Z().v * in.W().v * in.U().v  * in.V().v , in.Feature().v * in.Batch().v};
         dispatchData.lws = GetOptimalLocalWorkGroupSizes(dispatchData.gws, params.engineInfo, in_layout, out_layout, dims_by_gws);
     }
 
     return dispatchData;
 }
 
-bool PermuteKernelRef::Validate(const Params& p, const optional_params& o) const {
-    if (!Parent::Validate(p, o)) return false;
+bool PermuteKernelRef::Validate(const Params& p) const {
+    if (!Parent::Validate(p)) return false;
+
+    const permute_params& params = static_cast<const permute_params&>(p);
+
+    auto in_rank = params.inputs[0].GetDims().size();
+    auto out_rank = params.outputs[0].GetDims().size();
+    if (in_rank != out_rank && (in_rank > 6 || out_rank > 6))
+       return false;
 
     return true;
 }
@@ -158,15 +168,6 @@ JitConstants PermuteKernelRef::GetJitConstants(const permute_params& params, con
     auto jit = Parent::GetJitConstants(params, dispatchData);
     std::vector<std::string> in_idx;
     std::vector<std::string> permute_out_idx;
-
-    std::map<std::string, std::string> size_str_map = {
-        {"b", "INPUT0_BATCH_NUM"},
-        {"f", "INPUT0_FEATURE_NUM"},
-        {"w", "INPUT0_SIZE_W"},
-        {"z", "INPUT0_SIZE_Z"},
-        {"y", "INPUT0_SIZE_Y"},
-        {"x", "INPUT0_SIZE_X"}
-    };
 
     std::pair<size_t, size_t> dim_change;
     bool reorder_to_different_dim = false;
@@ -178,6 +179,8 @@ JitConstants PermuteKernelRef::GetJitConstants(const permute_params& params, con
     }
 
     switch (DataTensor::ChannelsCount(params.inputs[0].GetLayout())) {
+        case 8: in_idx = {"b", "f", "x", "y", "z", "w", "u", "v" }; break;
+        case 7: in_idx = {"b", "f", "x", "y", "z", "w", "u" }; break;
         case 6: in_idx = {"b", "f", "x", "y", "z", "w" }; break;
         case 5: in_idx = {"b", "f", "x", "y", "z" }; break;
         default: in_idx = {"b", "f", "x", "y" }; break;
@@ -211,13 +214,8 @@ JitConstants PermuteKernelRef::GetJitConstants(const permute_params& params, con
     }
 
     if (!params.fused_ops.empty()) {
-        if (permute_out_idx.size() == 4) {
-            std::swap(permute_out_idx[2], permute_out_idx[3]);
-        } else if (permute_out_idx.size() == 5) {
-            std::swap(permute_out_idx[2], permute_out_idx[4]);
-        } else if (permute_out_idx.size() == 6) {
-            std::swap(permute_out_idx[2], permute_out_idx[5]);
-            std::swap(permute_out_idx[3], permute_out_idx[4]);
+        for (size_t i = 0; i < (permute_out_idx.size() - 2) / 2; i++) {
+            std::swap(permute_out_idx[2 + i], permute_out_idx[permute_out_idx.size() - 1 - i]);
         }
 
         if (reorder_to_different_dim) {
@@ -231,7 +229,7 @@ JitConstants PermuteKernelRef::GetJitConstants(const permute_params& params, con
     return jit;
 }
 
-KernelsPriority PermuteKernelRef::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority PermuteKernelRef::GetKernelsPriority(const Params& /*params*/) const {
     return DONT_USE_IF_HAVE_SOMETHING_ELSE;
 }
 }  // namespace kernel_selector

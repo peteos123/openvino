@@ -1,35 +1,26 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #include "internal/pass/transform_if.hpp"
 
-#include <ngraph/ngraph.hpp>
-#include <ngraph/pattern/matcher.hpp>
-#include <ngraph/pattern/op/or.hpp>
-#include <ngraph/pattern/op/wrap_type.hpp>
-#include <ngraph/rt_info.hpp>
-#include <ngraph/variant.hpp>
-#include <transformations/common_optimizations/fold_subgraph_empty_inputs.hpp>
-
 #include "default_opset.hpp"
 #include "internal/op/conditional_block.hpp"
 #include "internal/op/tensorarray_write.hpp"
-#include "ngraph/op/util/op_types.hpp"
-#include "openvino/frontend/paddle/exception.hpp"
-#include "openvino/op/util/op_types.hpp"
-#include "openvino/pass/pattern/op/label.hpp"
+#include "openvino/pass/pattern/matcher.hpp"
+#include "openvino/pass/pattern/op/wrap_type.hpp"
+#include "transformations/common_optimizations/fold_subgraph_empty_inputs.hpp"
 
 using namespace std;
 using namespace ov;
 using namespace ov::pass;
 using namespace ov::frontend::paddle::op::default_opset;
 
-// Transform Paddle "conditonal_block" to OpenVINO If op.
-// The contional_block only has "then" branch, while If op requires both "then" and "else" branch the same time.
+// Transform Paddle "conditional_block" to OpenVINO If op.
+// The conditional_block only has "then" branch, while If op requires both "then" and "else" branch the same time.
 // Thus a "pass-through" model is built on purpose for "else" branch with the same outputs as "then" branch.
 ov::frontend::paddle::pass::TransformIf::TransformIf(std::vector<std::shared_ptr<Model>> funcs) {
-    const auto cond_label = ngraph::pattern::wrap_type<ov::op::internal::ConditionalBlock>();
+    const auto cond_label = pattern::wrap_type<ov::op::internal::ConditionalBlock>();
 
     matcher_pass_callback callback = [funcs](pattern::Matcher& m) -> bool {
         const auto conditional_block =
@@ -50,7 +41,7 @@ ov::frontend::paddle::pass::TransformIf::TransformIf(std::vector<std::shared_ptr
         // openvino If requires both then and else branch at the same time.
         ParameterVector params;
         ResultVector results;
-        for (auto i = 0; i < then_branch->get_output_size(); i++) {
+        for (size_t i = 0; i < then_branch->get_output_size(); i++) {
             const auto param = std::make_shared<Parameter>(then_branch->get_output_element_type(i),
                                                            then_branch->get_output_partial_shape(i));
             param->set_friendly_name(then_branch->get_output_op(i)->get_output_tensor(0).get_any_name());
@@ -67,10 +58,10 @@ ov::frontend::paddle::pass::TransformIf::TransformIf(std::vector<std::shared_ptr
         if_node->set_else_body(else_branch);
 
         const auto then_branch_inputs_from_parent = conditional_block->get_inputs_from_parent();
-        NGRAPH_CHECK(then_branch_inputs_from_parent.size() == then_params.size(),
-                     "Number of inputs to 'then_branch' is invalid. Expected " +
-                         std::to_string(then_branch_inputs_from_parent.size()) + ", actual " +
-                         std::to_string(then_params.size()));
+        OPENVINO_ASSERT(then_branch_inputs_from_parent.size() == then_params.size(),
+                        "Number of inputs to 'then_branch' is invalid. Expected " +
+                            std::to_string(then_branch_inputs_from_parent.size()) + ", actual " +
+                            std::to_string(then_params.size()));
         auto then_param = then_params.cbegin();
         for (const auto& from_parent : then_branch_inputs_from_parent) {
             if_node->set_input(from_parent, *then_param, nullptr);
@@ -96,7 +87,7 @@ ov::frontend::paddle::pass::TransformIf::TransformIf(std::vector<std::shared_ptr
 
         auto else_results = else_branch->get_results();
         auto then_results = then_branch->get_results();
-        for (auto i = 0; i < else_results.size(); i++) {
+        for (size_t i = 0; i < else_results.size(); i++) {
             if_node->set_output(then_results[i], else_results[i]);
         }
         replace_node(conditional_block, if_node);
@@ -105,6 +96,6 @@ ov::frontend::paddle::pass::TransformIf::TransformIf(std::vector<std::shared_ptr
         return true;
     };
 
-    auto m = std::make_shared<ngraph::pattern::Matcher>(cond_label, "condtionalblock_if");
+    auto m = std::make_shared<pattern::Matcher>(cond_label, "condtionalblock_if");
     this->register_matcher(m, callback);
 }

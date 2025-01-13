@@ -1,4 +1,4 @@
-# Copyright (C) 2018-2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -7,10 +7,6 @@ Low level wrappers for the PrePostProcessing C++ API.
 """
 
 # flake8: noqa
-
-from openvino.utils import add_openvino_libs_to_path
-
-add_openvino_libs_to_path()
 
 from openvino._pyopenvino import get_version
 
@@ -28,3 +24,5 @@ from openvino._pyopenvino.preprocess import PreProcessSteps
 from openvino._pyopenvino.preprocess import PostProcessSteps
 from openvino._pyopenvino.preprocess import ColorFormat
 from openvino._pyopenvino.preprocess import ResizeAlgorithm
+from openvino._pyopenvino.preprocess import PaddingMode
+

@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 #include "eltwise_inst.h"
@@ -9,11 +9,25 @@
 #include <vector>
 #include <algorithm>
 
+#include "eltwise_shape_inference.hpp"
 #include "openvino/op/add.hpp"
-#include "utils.hpp"
 
 namespace cldnn {
 GPU_DEFINE_PRIMITIVE_TYPE_ID(eltwise)
+
+const std::set<eltwise_mode>
+    eltwise::eltwise_bool_modes = { eltwise_mode::eq,
+                                    eltwise_mode::ne,
+                                    eltwise_mode::lt,
+                                    eltwise_mode::le,
+                                    eltwise_mode::gt,
+                                    eltwise_mode::ge,
+                                    eltwise_mode::logic_and,
+                                    eltwise_mode::logic_or,
+                                    eltwise_mode::logic_xor,
+                                    eltwise_mode::is_finite,
+                                    eltwise_mode::is_inf,
+                                    eltwise_mode::is_nan };
 
 layout eltwise_inst::calc_output_layout(eltwise_node const& node, kernel_impl_params const& impl_param) {
     size_t primary_input_idx = 0;
@@ -65,22 +79,18 @@ layout eltwise_inst::calc_output_layout(eltwise_node const& node, kernel_impl_pa
                                                        eltwise_mode::floor_mod,
                                                        eltwise_mode::logic_and,
                                                        eltwise_mode::logic_or,
-                                                       eltwise_mode::logic_xor};
+                                                       eltwise_mode::logic_xor,
+                                                       eltwise_mode::right_shift,
+                                                       eltwise_mode::left_shift,
+                                                       eltwise_mode::bitwise_and,
+                                                       eltwise_mode::bitwise_or,
+                                                       eltwise_mode::bitwise_xor};
         if (std::find(eltwise_int_modes.begin(), eltwise_int_modes.end(), mode) == eltwise_int_modes.end())
             CLDNN_ERROR_MESSAGE(desc->id, "Requested eltwise mode is not supported for integer types.");
     }
 
     // Logic and comparison operations should return i8 for any inputs
-    std::vector<eltwise_mode> eltwise_bool_modes = {eltwise_mode::eq,
-                                                    eltwise_mode::ne,
-                                                    eltwise_mode::lt,
-                                                    eltwise_mode::le,
-                                                    eltwise_mode::gt,
-                                                    eltwise_mode::ge,
-                                                    eltwise_mode::logic_and,
-                                                    eltwise_mode::logic_or,
-                                                    eltwise_mode::logic_xor};
-    if (std::find(eltwise_bool_modes.begin(), eltwise_bool_modes.end(), mode) != eltwise_bool_modes.end()) {
+    if (eltwise::eltwise_bool_modes.find(mode) != eltwise::eltwise_bool_modes.end()) {
         output_layout.data_type = data_types::i8;
     }
 
@@ -89,7 +99,7 @@ layout eltwise_inst::calc_output_layout(eltwise_node const& node, kernel_impl_pa
     }
 
     if (node.has_fused_primitives()) {
-        output_layout.data_type = node.get_fused_output_layout().data_type;
+        output_layout.data_type = impl_param.get_output_element_type();
     }
 
     if (!desc->stride.empty()) {
@@ -112,7 +122,6 @@ std::vector<layout> eltwise_inst::calc_output_layouts(eltwise_node const& /*node
     auto out_data_type = desc->output_data_types[0].value_or(input_layout.data_type);
 
     auto get_output_layout = [&]() {
-        auto out_pshape = input_layout.get<ShapeType>();
         cldnn::format out_format = input_layout.format;
 
         // We create dummy Add op as shape infer is exactly the same for any eltwise op type, so there is no need to have correct op type
@@ -124,7 +133,13 @@ std::vector<layout> eltwise_inst::calc_output_layouts(eltwise_node const& /*node
         for (size_t i = 0; i < desc->input_size(); i++) {
             input_shapes.push_back(impl_param.get_input_layout(i).get<ShapeType>());
         }
-        eltwise_shape_infer(&op, input_shapes, output_shapes);
+
+        // Special handling for is_finite, is_nan, is_inf modes
+        if (input_shapes.size() == 1) {
+            output_shapes = input_shapes;
+        } else {
+            output_shapes = ov::op::eltwise_shape_infer(&op, input_shapes);
+        }
 
         if (input_layout.format == format::b_fs_zyx_fsv16)  // use optimized 5D
             out_format = format::b_fs_zyx_fsv16;
@@ -167,30 +182,26 @@ std::vector<layout> eltwise_inst::calc_output_layouts(eltwise_node const& /*node
                                                        eltwise_mode::floor_mod,
                                                        eltwise_mode::logic_and,
                                                        eltwise_mode::logic_or,
-                                                       eltwise_mode::logic_xor};
+                                                       eltwise_mode::logic_xor,
+                                                       eltwise_mode::right_shift,
+                                                       eltwise_mode::left_shift,
+                                                       eltwise_mode::bitwise_and,
+                                                       eltwise_mode::bitwise_or,
+                                                       eltwise_mode::bitwise_xor};
 
         OPENVINO_ASSERT((std::find(eltwise_int_modes.begin(), eltwise_int_modes.end(), mode) != eltwise_int_modes.end()),
                             desc->id + "Requested eltwise mode is not supported for integer types.");
     }
 
     // Logic and comparison operations should return i8 for any inputs
-    std::vector<eltwise_mode> eltwise_bool_modes = {eltwise_mode::eq,
-                                                    eltwise_mode::ne,
-                                                    eltwise_mode::lt,
-                                                    eltwise_mode::le,
-                                                    eltwise_mode::gt,
-                                                    eltwise_mode::ge,
-                                                    eltwise_mode::logic_and,
-                                                    eltwise_mode::logic_or,
-                                                    eltwise_mode::logic_xor};
-    if (std::find(eltwise_bool_modes.begin(), eltwise_bool_modes.end(), mode) != eltwise_bool_modes.end()) {
+    if (eltwise::eltwise_bool_modes.find(mode) != eltwise::eltwise_bool_modes.end()) {
         output_layout.data_type = data_types::i8;
     }
 
     output_layout.data_type = desc->output_data_types[0].value_or(output_layout.data_type);
 
     if (impl_param.has_fused_primitives()) {
-        output_layout.data_type = impl_param.get_fused_output_layout().data_type;
+        output_layout.data_type = impl_param.get_output_element_type();
     }
 
     if (!desc->stride.empty()) {
@@ -295,17 +306,41 @@ std::string eltwise_inst::to_string(eltwise_node const& node) {
         case eltwise_mode::floor_mod:
             str_mode = "floor_mod";
             break;
+        case eltwise_mode::is_finite:
+            str_mode = "is_finite";
+            break;
+        case eltwise_mode::is_inf:
+            str_mode = "is_inf";
+            break;
+        case eltwise_mode::is_nan:
+            str_mode = "is_nan";
+            break;
+        case eltwise_mode::right_shift:
+            str_mode = "right_shift";
+            break;
+        case eltwise_mode::left_shift:
+            str_mode = "left_shift";
+            break;
+        case eltwise_mode::bitwise_and:
+            str_mode = "bitwise_and";
+            break;
+        case eltwise_mode::bitwise_or:
+            str_mode = "bitwise_or";
+            break;
+        case eltwise_mode::bitwise_xor:
+            str_mode = "bitwise_xor";
+            break;
         default:
             str_mode = "not supported mode";
             break;
     }
 
     json_composite eltwise_info;
-    for (size_t i = 0; i < node.inputs_count(); i++) {
+    for (size_t i = 0; i < node.get_inputs_count(); i++) {
         eltwise_info.add("input_" + std::to_string(i), node.input(i).id());
     }
     eltwise_info.add("mode", str_mode);
-    if (desc->mode == eltwise_mode::sum) {
+    if (!desc->coefficients.empty()) {
         eltwise_info.add("coefficients", stringify_vector(desc->coefficients));
     }
     node_info->add("eltwise info", eltwise_info);
@@ -318,7 +353,7 @@ eltwise_inst::typed_primitive_inst(network& network, eltwise_node const& node) :
     check_inputs_count(node);
     // check for stride
     auto prim = node.get_primitive();
-    auto inputs_count = node.inputs_count();
+    auto inputs_count = node.get_inputs_count();
 
     if (is_dynamic())
         return;
@@ -358,13 +393,30 @@ eltwise_inst::typed_primitive_inst(network& network, eltwise_node const& node) :
                                       "");
         }
     } else {
-        std::vector<int32_t> input0_size = node.input().get_output_layout().get_tensor().raw.vector();
-        for (size_t i = 1; i < inputs_count; i++) {
-            std::vector<int32_t> input_size = node.input(i).get_output_layout().get_tensor().raw.vector();
-            for (size_t d = 0; d < input0_size.size(); d++) {
-                bool sizes_equal = input0_size[d] == input_size[d];
+        bool use_new_shape_infer = network.get_config().get_property(ov::intel_gpu::allow_new_shape_infer);
+        auto input0_pshape = node.get_input_pshape(0);
+
+        for (size_t i = 1; i < inputs_count; ++i) {
+            auto input_pshape = node.get_input_pshape(i);
+
+            if (input0_pshape.size() > input_pshape.size()) {
+                if (use_new_shape_infer) {
+                    input_pshape.insert(input_pshape.begin(), input0_pshape.size() - input_pshape.size(), 1);
+                } else {
+                    input_pshape.insert(input_pshape.end(), input0_pshape.size() - input_pshape.size(), 1);
+                }
+            }
+
+            auto base_pshape = input0_pshape;
+            if (prim->broadcast_spec == ov::op::AutoBroadcastType::NUMPY &&
+                base_pshape.size() < input_pshape.size()) {
+                base_pshape.insert(base_pshape.begin(), input_pshape.size() - base_pshape.size(), 1);
+            }
+
+            for (size_t d = 0; d < base_pshape.size(); ++d) {
+                bool sizes_equal = base_pshape[d] == input_pshape[d];
                 bool broadcast =
-                    (input0_size[d] == 1 || input_size[d] == 1) && (input0_size[d] != 1 || input_size[d] != 1);
+                    (base_pshape[d] == 1 || input_pshape[d] == 1) && (base_pshape[d] != 1 || input_pshape[d] != 1);
                 CLDNN_ERROR_BOOL(node.id(),
                                  "Sizes equal or broadcast is possible",
                                  !(sizes_equal || broadcast),
@@ -389,10 +441,8 @@ void eltwise_inst::check_inputs_count(eltwise_node const& node) {
         case eltwise_mode::logic_and:
         case eltwise_mode::logic_or:
         case eltwise_mode::logic_xor:
-            if (inputs_number < 2)
-                CLDNN_ERROR_MESSAGE(node.id(),
-                                    "Invalid eltwise inputs number (should be equal at least to 2). Actual: " +
-                                        std::to_string(inputs_number));
+            OPENVINO_ASSERT(inputs_number >= 2,
+                            "Node id: ", node.id(), ". Invalid eltwise inputs number (should be equal at least to 2). Actual: ", inputs_number);
             break;
         case eltwise_mode::eq:
         case eltwise_mode::ne:
@@ -403,10 +453,19 @@ void eltwise_inst::check_inputs_count(eltwise_node const& node) {
         case eltwise_mode::squared_diff:
         case eltwise_mode::pow:
         case eltwise_mode::floor_mod:
-            if (inputs_number != 2)
-                CLDNN_ERROR_MESSAGE(
-                    node.id(),
-                    "Invalid eltwise inputs number (should be equal to 2). Actual: " + std::to_string(inputs_number));
+        case eltwise_mode::right_shift:
+        case eltwise_mode::left_shift:
+        case eltwise_mode::bitwise_and:
+        case eltwise_mode::bitwise_or:
+        case eltwise_mode::bitwise_xor:
+            OPENVINO_ASSERT(inputs_number == 2,
+                            "Node id: ", node.id(), ". Invalid eltwise inputs number (should be equal to 2). Actual: ", inputs_number);
+            break;
+        case eltwise_mode::is_finite:
+        case eltwise_mode::is_inf:
+        case eltwise_mode::is_nan:
+            OPENVINO_ASSERT(inputs_number == 1,
+                            "Node id: ", node.id(), ". Invalid eltwise inputs number (should be equal to 1). Actual: ", inputs_number);
             break;
     }
 }

@@ -1,20 +1,20 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include <ngraph/pass/graph_rewrite.hpp>
-#include <transformations_visibility.hpp>
+#include "openvino/pass/graph_rewrite.hpp"
+#include "openvino/core/visibility.hpp"
 
 namespace ov {
 namespace intel_gpu {
 
-class ConvertAvgPoolingToReduce : public ngraph::pass::MatcherPass {
+class ConvertAvgPoolingToReduce : public ov::pass::MatcherPass {
 public:
-    OPENVINO_RTTI("ConvertAvgPoolingToReduce", "0");
+    OPENVINO_MATCHER_PASS_RTTI("ConvertAvgPoolingToReduce");
     ConvertAvgPoolingToReduce();
 };
 
-}  // namespace pass
-}  // namespace ngraph
+}  // namespace intel_gpu
+}  // namespace ov

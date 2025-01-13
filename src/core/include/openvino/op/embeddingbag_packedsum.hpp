@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -15,7 +15,7 @@ namespace v3 {
 /// \ingroup ov_ops_cpp_api
 class OPENVINO_API EmbeddingBagPackedSum : public util::EmbeddingBagPackedBase {
 public:
-    OPENVINO_OP("EmbeddingBagPackedSum", "opset3", util::EmbeddingBagPackedBase, 3);
+    OPENVINO_OP("EmbeddingBagPackedSum", "opset3", util::EmbeddingBagPackedBase);
     /// \brief Constructs a EmbeddingBagPackedSum operation.
     EmbeddingBagPackedSum() = default;
     /// \brief Constructs a EmbeddingBagPackedSum operation.
@@ -39,6 +39,8 @@ public:
     EmbeddingBagPackedSum(const Output<Node>& emb_table, const Output<Node>& indices);
 
     std::shared_ptr<Node> clone_with_new_inputs(const OutputVector& new_args) const override;
+
+    bool visit_attributes(AttributeVisitor& visitor) override;
 };
 }  // namespace v3
 }  // namespace op

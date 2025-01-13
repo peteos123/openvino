@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -8,15 +8,10 @@
 #include <vector>
 
 #include "shared_test_classes/base/ov_subgraph.hpp"
-#include "ngraph/function.hpp"
-#include "ngraph_functions/subgraph_builders.hpp"
-#include "functional_test_utils/plugin_cache.hpp"
 #include "common_test_utils/unicode_utils.hpp"
 #include "openvino/util/common_util.hpp"
+#include "openvino/util/codec_xor.hpp"
 #include "base/ov_behavior_test_utils.hpp"
-
-#include <ie_core.hpp>
-#include <ie_common.h>
 
 namespace ov {
 namespace test {
@@ -70,12 +65,50 @@ using compileModelLoadFromFileParams = std::tuple<
 class CompileModelLoadFromFileTestBase : public testing::WithParamInterface<compileModelLoadFromFileParams>,
                                   virtual public SubgraphBaseTest,
                                   virtual public OVPluginTestBase {
+public:
+    std::string m_cacheFolderName;
+    std::string m_modelName;
+    std::string m_weightsName;
+
+    static std::string getTestCaseName(testing::TestParamInfo<compileModelLoadFromFileParams> obj);
+
+    void SetUp() override;
+    void TearDown() override;
+    void run() override;
+};
+
+using compileModelCacheRuntimePropertiesParams = std::tuple<std::string,  // device name
+                                                            ov::AnyMap    // device configuration
+                                                            >;
+class CompileModelCacheRuntimePropertiesTestBase
+    : public testing::WithParamInterface<compileModelCacheRuntimePropertiesParams>,
+      virtual public SubgraphBaseTest,
+      virtual public OVPluginTestBase {
+    std::string m_cacheFolderName;
+    std::string m_modelName;
+    std::string m_weightsName;
+    std::string m_compiled_model_runtime_properties;
+
+public:
+    static std::string getTestCaseName(testing::TestParamInfo<compileModelCacheRuntimePropertiesParams> obj);
+
+    void SetUp() override;
+    void TearDown() override;
+    void run() override;
+};
+
+using CompileModelLoadFromCacheParams = std::tuple<std::string,  // device name
+                                                   ov::AnyMap    // device configuration
+                                                   >;
+class CompileModelLoadFromCacheTest : public testing::WithParamInterface<CompileModelLoadFromCacheParams>,
+                                      virtual public SubgraphBaseTest,
+                                      virtual public OVPluginTestBase {
     std::string m_cacheFolderName;
     std::string m_modelName;
     std::string m_weightsName;
 
 public:
-    static std::string getTestCaseName(testing::TestParamInfo<compileModelLoadFromFileParams> obj);
+    static std::string getTestCaseName(testing::TestParamInfo<CompileModelLoadFromCacheParams> obj);
 
     void SetUp() override;
     void TearDown() override;
@@ -89,11 +122,14 @@ class CompileModelLoadFromMemoryTestBase : public testing::WithParamInterface<co
                                            virtual public SubgraphBaseTest,
                                            virtual public OVPluginTestBase {
     std::string m_cacheFolderName;
+    std::vector<std::uint8_t> weights_vector;
+
+protected:
     std::string m_modelName;
     std::string m_weightsName;
     std::string m_model;
     ov::Tensor m_weights;
-    std::vector<std::uint8_t> weights_vector;
+
 
 public:
     static std::string getTestCaseName(testing::TestParamInfo<compileModelLoadFromMemoryParams> obj);
@@ -101,6 +137,7 @@ public:
     void SetUp() override;
     void TearDown() override;
     void run() override;
+    bool importExportSupported(ov::Core &core) const;
 };
 
 using compileKernelsCacheParams = std::tuple<
@@ -119,6 +156,20 @@ protected:
 
     void SetUp() override;
     void TearDown() override;
+};
+class CompileModelWithCacheEncryptionTest : public testing::WithParamInterface<std::string>,
+                                      virtual public SubgraphBaseTest,
+                                      virtual public OVPluginTestBase {
+    std::string m_cacheFolderName;
+    std::string m_modelName;
+    std::string m_weightsName;
+
+public:
+    static std::string getTestCaseName(testing::TestParamInfo<std::string> obj);
+
+    void SetUp() override;
+    void TearDown() override;
+    void run() override;
 };
 } // namespace behavior
 } // namespace test

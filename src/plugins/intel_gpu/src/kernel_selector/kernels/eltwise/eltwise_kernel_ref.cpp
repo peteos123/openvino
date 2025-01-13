@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2018-2022 Intel Corporation
+﻿// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -13,13 +13,19 @@ ParamsKey EltwiseKernelRef::GetSupportedKey() const {
     k.EnableInputDataType(Datatype::F32);
     k.EnableInputDataType(Datatype::INT8);
     k.EnableInputDataType(Datatype::UINT8);
+    k.EnableInputDataType(Datatype::INT16);
+    k.EnableInputDataType(Datatype::UINT16);
     k.EnableInputDataType(Datatype::INT32);
+    k.EnableInputDataType(Datatype::UINT32);
     k.EnableInputDataType(Datatype::INT64);
     k.EnableOutputDataType(Datatype::F16);
     k.EnableOutputDataType(Datatype::F32);
     k.EnableOutputDataType(Datatype::INT8);
     k.EnableOutputDataType(Datatype::UINT8);
+    k.EnableOutputDataType(Datatype::INT16);
+    k.EnableOutputDataType(Datatype::UINT16);
     k.EnableOutputDataType(Datatype::INT32);
+    k.EnableOutputDataType(Datatype::UINT32);
     k.EnableOutputDataType(Datatype::INT64);
     k.EnableDifferentTypes();
     k.EnableAllInputLayout();
@@ -33,19 +39,19 @@ ParamsKey EltwiseKernelRef::GetSupportedKey() const {
     return k;
 }
 
-bool EltwiseKernelRef::Validate(const Params& p, const optional_params& o) const {
-    if (!EltwiseKernelBase::Validate(p, o)) {
+bool EltwiseKernelRef::Validate(const Params& p) const {
+    if (!EltwiseKernelBase::Validate(p)) {
         return false;
     }
 
     return true;
 }
 
-KernelsData EltwiseKernelRef::GetKernelsData(const Params& params, const optional_params& options) const {
-    return GetCommonKernelsData(params, options);
+KernelsData EltwiseKernelRef::GetKernelsData(const Params& params) const {
+    return GetCommonKernelsData(params);
 }
 
-KernelsPriority EltwiseKernelRef::GetKernelsPriority(const Params& /*params*/, const optional_params& /*options*/) const {
+KernelsPriority EltwiseKernelRef::GetKernelsPriority(const Params& /*params*/) const {
     return DONT_USE_IF_HAVE_SOMETHING_ELSE;
 }
 
@@ -59,7 +65,7 @@ JitConstants EltwiseKernelRef::GetJitConstants(const eltwise_params& params) con
         if (DataTensor::ChannelsCount(params.outputs[0].GetLayout()) == 4) {
             if (!params.layoutBased && !params.int8_quantization && !params.broadcast && !CheckInputsOutputNoPitchSameDims(params)) {
                 auto calc_dim = [&params](Tensor::DataChannelName channel) {
-                    size_t idx = DataTensor::Channelndex(params.outputs[0].GetLayout(), channel);
+                    int idx = DataTensor::Channelndex(params.outputs[0].GetLayout(), channel);
                     // We increment the index, because fusions dims ordering starts from one
                     return "d" + std::to_string(idx + 1);
                 };
@@ -71,10 +77,12 @@ JitConstants EltwiseKernelRef::GetJitConstants(const eltwise_params& params) con
             } else {
                 idx_order = {"d4", "d3", "d2", "d1"};
             }
-        } else if (DataTensor::ChannelsCount(params.outputs[0].GetLayout()) == 5) {
-            idx_order = {"d5", "d4", "d3", "d2", "d1"};
-        } else if (DataTensor::ChannelsCount(params.outputs[0].GetLayout()) == 6) {
-            idx_order = {"d6", "d5", "d4", "d3", "d2", "d1"};
+        } else {
+            size_t channels = DataTensor::ChannelsCount(params.outputs[0].GetLayout());
+            idx_order.resize(channels);
+            for (size_t i = 0; i < channels; i++) {
+                idx_order[i] = "d" + std::to_string(channels - i);
+            }
         }
 
         if (!params.layoutBased && !params.int8_quantization && !params.broadcast && CheckInputsOutputNoPitchSameDims(params)) {

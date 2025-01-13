@@ -1,65 +1,35 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
-#include <openvino/frontend/exception.hpp>
-#include <openvino/frontend/manager.hpp>
 
 #include "common_test_utils/file_utils.hpp"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "ngraph/file_util.hpp"
-#include "ngraph/util.hpp"
+#include "common_test_utils/test_assertions.hpp"
+#include "openvino/frontend/exception.hpp"
+#include "openvino/frontend/manager.hpp"
 #include "openvino/util/file_util.hpp"
-
-#ifdef _WIN32
-#    ifndef NOMINMAX
-#        define NOMINMAX
-#    endif
-#    include <windows.h>
-#    if defined(WINAPI_FAMILY) && !WINAPI_PARTITION_DESKTOP
-#        error "Only WINAPI_PARTITION_DESKTOP is supported, because of LoadLibrary[A|W]"
-#    endif
-#elif defined(__linux) || defined(__APPLE__)
-#    include <dlfcn.h>
-#endif
 
 using namespace ov::frontend;
 
-static int set_test_env(const char* name, const char* value) {
-#ifdef _WIN32
-    return _putenv_s(name, value);
-#elif defined(__linux) || defined(__APPLE__)
-    std::string var = std::string(name) + "=" + value;
-    return setenv(name, value, 1);
-#else
-#    error "Unsupported OS"
-#endif
+static std::string mock_fe_path() {
+    static auto lib_name = std::string(FRONTEND_LIB_PREFIX) + "mock1" + std::string(FRONTEND_LIB_SUFFIX);
+    return ov::util::path_join({ov::test::utils::getExecutableDirectory(), lib_name});
 }
-
-struct SetTestEnvrionment {
-    SetTestEnvrionment(const char* value = nullptr) {
-        NGRAPH_SUPPRESS_DEPRECATED_START
-        set_test_env("OV_FRONTEND_PATH", value ? value : CommonTestUtils::getExecutableDirectory().c_str());
-        NGRAPH_SUPPRESS_DEPRECATED_END
-    }
-
-    ~SetTestEnvrionment() {
-        set_test_env("OV_FRONTEND_PATH", "");
-    }
-};
 
 TEST(FrontEndManagerTest, testAvailableFrontEnds) {
     FrontEndManager fem;
     class MockFrontEnd : public FrontEnd {};
-    ASSERT_NO_THROW(fem.register_front_end("mock", []() {
+    OV_ASSERT_NO_THROW(fem.register_front_end("mock", []() {
         return std::make_shared<MockFrontEnd>();
     }));
     auto frontends = fem.get_available_front_ends();
     ASSERT_NE(std::find(frontends.begin(), frontends.end(), "mock"), frontends.end());
     FrontEnd::Ptr fe;
-    ASSERT_NO_THROW(fe = fem.load_by_framework("mock"));
+    OV_ASSERT_NO_THROW(fe = fem.load_by_framework("mock"));
 
     FrontEndManager fem2 = std::move(fem);
     frontends = fem2.get_available_front_ends();
@@ -70,38 +40,30 @@ TEST(FrontEndManagerTest, testAvailableFrontEnds) {
     ASSERT_EQ(std::find(frontends.begin(), frontends.end(), "mock"), frontends.end());
 }
 
+TEST(FrontEndManagerTest, testFailRegisterFEByWrongPath) {
+    FrontEndManager fem;
+    ASSERT_THROW(fem.register_front_end("mock1", mock_fe_path() + "_wrong"), ov::frontend::GeneralFailure);
+}
+
 TEST(FrontEndManagerTest, testMockPluginFrontEnd) {
-    {
-        // with wring env
-        SetTestEnvrionment obj("someInvalidPath");
+    FrontEndManager fem;
+    fem.register_front_end("mock1", mock_fe_path());
+    auto frontends = fem.get_available_front_ends();
+    EXPECT_NE(std::find(frontends.begin(), frontends.end(), "mock1"), frontends.end());
 
-        FrontEndManager fem;
-        auto frontends = fem.get_available_front_ends();
-        EXPECT_EQ(std::find(frontends.begin(), frontends.end(), "mock1"), frontends.end());
-    }
-
-    {
-        // update env
-        SetTestEnvrionment obj;
-
-        FrontEndManager fem;
-        auto frontends = fem.get_available_front_ends();
-        EXPECT_NE(std::find(frontends.begin(), frontends.end(), "mock1"), frontends.end());
-
-        FrontEnd::Ptr fe;
-        ASSERT_NO_THROW(fe = fem.load_by_framework("mock1"));
-        EXPECT_EQ(fe->get_name(), "mock1");
-    }
+    FrontEnd::Ptr fe;
+    OV_ASSERT_NO_THROW(fe = fem.load_by_framework("mock1"));
+    EXPECT_EQ(fe->get_name(), "mock1");
 }
 
 TEST(FrontEndManagerTest, testFEMDestroy_FrontEndHolder) {
     FrontEnd::Ptr fe;
     {
-        SetTestEnvrionment obj;
         FrontEndManager fem;
+        fem.register_front_end("mock1", mock_fe_path());
         auto frontends = fem.get_available_front_ends();
         EXPECT_NE(std::find(frontends.begin(), frontends.end(), "mock1"), frontends.end());
-        ASSERT_NO_THROW(fe = fem.load_by_framework("mock1"));
+        OV_ASSERT_NO_THROW(fe = fem.load_by_framework("mock1"));
     }
     EXPECT_EQ(fe->get_name(), "mock1");
 }
@@ -109,9 +71,9 @@ TEST(FrontEndManagerTest, testFEMDestroy_FrontEndHolder) {
 TEST(FrontEndManagerTest, testFEMDestroy_InputModelHolder) {
     InputModel::Ptr input_model;
     {
-        SetTestEnvrionment obj;
         std::shared_ptr<ov::Model> model;
         FrontEndManager fem;
+        fem.register_front_end("mock1", mock_fe_path());
         auto fe = fem.load_by_framework("mock1");
         input_model = fe->load("test");
         model = fe->convert(input_model);
@@ -123,8 +85,8 @@ TEST(FrontEndManagerTest, testFEMDestroy_InputModelHolder) {
 TEST(FrontEndManagerTest, testFEMDestroy_OVModelHolder) {
     std::shared_ptr<ov::Model> model;
     {
-        SetTestEnvrionment obj;
         FrontEndManager fem;
+        fem.register_front_end("mock1", mock_fe_path());
         auto fe = fem.load_by_framework("mock1");
         auto input_model = fe->load("test");
         model = fe->convert(input_model);
@@ -138,15 +100,15 @@ TEST(FrontEndManagerTest, testFEMDestroy_OVModelHolder) {
 TEST(FrontEndManagerTest, testFEMDestroy_OVModelHolder_Clone) {
     std::shared_ptr<ov::Model> model_clone;
     {
-        SetTestEnvrionment obj;
         FrontEndManager fem;
+        fem.register_front_end("mock1", mock_fe_path());
         auto fe = fem.load_by_framework("mock1");
         auto input_model = fe->load("test");
         auto model = fe->convert(input_model);
         EXPECT_EQ(model->get_friendly_name(), "mock1_model");
         EXPECT_TRUE(model->get_rt_info().count("mock_test"));
         EXPECT_EQ(model->get_rt_info()["mock_test"].as<std::string>(), std::string(1024, 't'));
-        model_clone = ov::clone_model(*model);
+        model_clone = model->clone();
     }
     EXPECT_EQ(model_clone->get_rt_info()["mock_test"].as<std::string>(), std::string(1024, 't'));
     EXPECT_EQ(model_clone->get_friendly_name(), "mock1_model");
@@ -154,8 +116,9 @@ TEST(FrontEndManagerTest, testFEMDestroy_OVModelHolder_Clone) {
 
 TEST(FrontEndManagerTest, testDefaultFrontEnd) {
     FrontEndManager fem;
+    fem.register_front_end("mock1", mock_fe_path());
     FrontEnd::Ptr fe;
-    ASSERT_NO_THROW(fe = fem.load_by_model(""));
+    OV_ASSERT_NO_THROW(fe = fem.load_by_model());
     ASSERT_EQ(nullptr, fe);
 
     class MockFrontEnd : public FrontEnd {};
@@ -193,9 +156,9 @@ TEST(FrontEndManagerTest, testDefaultInputModel) {
     ASSERT_ANY_THROW(im->cut_and_add_new_output(nullptr, ""));
     ASSERT_ANY_THROW(im->add_output(nullptr));
     ASSERT_ANY_THROW(im->remove_output(nullptr));
-    ASSERT_ANY_THROW(im->set_partial_shape(nullptr, ngraph::Shape{}));
+    ASSERT_ANY_THROW(im->set_partial_shape(nullptr, ov::Shape{}));
     ASSERT_ANY_THROW(im->get_partial_shape(nullptr));
-    ASSERT_ANY_THROW(im->set_element_type(nullptr, ngraph::element::Type{}));
+    ASSERT_ANY_THROW(im->set_element_type(nullptr, ov::element::Type{}));
     ASSERT_ANY_THROW(im->set_tensor_value(nullptr, nullptr));
     ASSERT_ANY_THROW(im->set_tensor_partial_value(nullptr, nullptr, nullptr));
 }
@@ -348,8 +311,8 @@ TEST(FrontEndExceptionTest, frontend_initialization_error_throw_info) {
 // FrontEndManager exception safety
 #define CHECK_EXCEPTION_FRONTEND(statement)                                                             \
     try {                                                                                               \
-        SetTestEnvrionment env;                                                                         \
         FrontEndManager fem;                                                                            \
+        fem.register_front_end("mock1", mock_fe_path());                                                \
         auto fe = fem.load_by_framework("mock1");                                                       \
         auto input_model = fe->load("throw_next");                                                      \
         statement;                                                                                      \
@@ -362,8 +325,8 @@ TEST(FrontEndExceptionTest, frontend_initialization_error_throw_info) {
 
 TEST(FrontEndManagerTest, Exception_Safety_FrontEnd_Load_By_Framework) {
     EXPECT_ANY_THROW({
-        SetTestEnvrionment env;
         FrontEndManager fem;
+        fem.register_front_end("mock1", mock_fe_path());
         auto fe = fem.load_by_framework("mock1");
         fe->load("throw_now");
     });
@@ -383,8 +346,8 @@ TEST(FrontEndManagerTest, Exception_Safety_FrontEnd_Get_Name) {
 
 TEST(FrontEndManagerTest, Exception_Safety_FrontEnd_Supported) {
     EXPECT_ANY_THROW({
-        SetTestEnvrionment env;
         FrontEndManager fem;
+        fem.register_front_end("mock1", mock_fe_path());
         auto fe = fem.load_by_framework("mock1");
         fe->supported("throw_now");
     });
@@ -409,8 +372,8 @@ TEST(FrontEndManagerTest, Exception_Safety_FrontEnd_Decode) {
 
 #define CHECK_EXCEPTION_INPUT_MODEL(statement)                                                          \
     try {                                                                                               \
-        SetTestEnvrionment env;                                                                         \
         FrontEndManager fem;                                                                            \
+        fem.register_front_end("mock1", mock_fe_path());                                                \
         auto fe = fem.load_by_framework("mock1");                                                       \
         auto input_model = fe->load("throw_model");                                                     \
         statement;                                                                                      \
@@ -516,3 +479,29 @@ TEST(FrontEndManagerTest, Exception_Safety_Input_Model_set_tensor_value) {
 TEST(FrontEndManagerTest, Exception_Safety_Input_Model_set_tensor_partial_value) {
     CHECK_EXCEPTION_INPUT_MODEL(input_model->set_tensor_partial_value({}, {}, {}))
 }
+
+#ifdef OPENVINO_CPP_VER_17
+
+TEST(FrontEndManagerTest, testFEMDestroy_InputModelHolderUsingPath) {
+    InputModel::Ptr input_model;
+    {
+        std::shared_ptr<ov::Model> model;
+        FrontEndManager fem;
+        fem.register_front_end("mock1", mock_fe_path());
+        auto fe = fem.load_by_framework("mock1");
+        input_model = fe->load(std::filesystem::path("test"));
+        model = fe->convert(input_model);
+        EXPECT_EQ(model->get_friendly_name(), "mock1_model");
+    }
+    ASSERT_TRUE(input_model);
+}
+
+TEST(FrontEndManagerTest, Exception_Safety_FrontEnd_Supported_By_Path) {
+    EXPECT_ANY_THROW({
+        FrontEndManager fem;
+        fem.register_front_end("mock1", mock_fe_path());
+        auto fe = fem.load_by_framework("mock1");
+        fe->supported(std::filesystem::path("throw_now"));
+    });
+}
+#endif

@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -27,6 +27,8 @@ namespace cldnn {
 struct normalize : public primitive_base<normalize> {
     CLDNN_DECLARE_PRIMITIVE(normalize)
 
+    normalize() : primitive_base("", {}) {}
+
     /// @brief Constructs normalize primitive.
     /// @param id This primitive id.
     /// @param input Input primitive id.
@@ -39,9 +41,8 @@ struct normalize : public primitive_base<normalize> {
               const input_info& input,
               const primitive_id& scale_input,
               const bool across_spatial = true,
-              const float epsilon = 1e-10f,
-              const padding& output_padding = padding())
-        : primitive_base(id, {input}, {output_padding}),
+              const float epsilon = 1e-10f)
+        : primitive_base(id, {input}),
           scale_input(scale_input),
           across_spatial(across_spatial),
           epsilon(epsilon) {}
@@ -51,11 +52,42 @@ struct normalize : public primitive_base<normalize> {
     /// All other dimensions should be 1.
     primitive_id scale_input;
     /// @brief Determines if the normalization is done across or within spatial (see documentation above).
-    bool across_spatial;
+    bool across_spatial = true;
     /// @brief Epsilon for not dividing by zero while normalizing.
-    float epsilon;
+    float epsilon = 1e-10f;
+
+    size_t hash() const override {
+        size_t seed = primitive::hash();
+        seed = hash_combine(seed, across_spatial);
+        seed = hash_combine(seed, epsilon);
+        return seed;
+    }
+
+    bool operator==(const primitive& rhs) const override {
+        if (!compare_common_params(rhs))
+            return false;
+
+        auto rhs_casted = downcast<const normalize>(rhs);
+
+        return across_spatial == rhs_casted.across_spatial &&
+               epsilon == rhs_casted.epsilon;
+    }
+
+    void save(BinaryOutputBuffer& ob) const override {
+        primitive_base<normalize>::save(ob);
+        ob << scale_input;
+        ob << across_spatial;
+        ob << epsilon;
+    }
+
+    void load(BinaryInputBuffer& ib) override {
+        primitive_base<normalize>::load(ib);
+        ib >> scale_input;
+        ib >> across_spatial;
+        ib >> epsilon;
+    }
 
 protected:
-    std::vector<std::reference_wrapper<const primitive_id>> get_dependencies() const override { return {scale_input}; }
+    std::vector<input_info> get_dependencies() const override { return {scale_input}; }
 };
 }  // namespace cldnn

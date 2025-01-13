@@ -1,12 +1,7 @@
-requests
-pyyaml
-wheel
-test-generator
+-c ../../constraints.txt
 numpy
+opencv-python-headless
+requests
 pytest
-py>=1.9.0
-scikit-build
-opencv-python
-progress
-nibabel
-scipy
+pytest-xdist  # Enable pytest --numprocesses
+pyyaml

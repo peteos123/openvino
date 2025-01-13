@@ -1,17 +1,16 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "pooling_inst.h"
-#include "sliding_window_utils.hpp"
-
-#include "ngraph/validation_util.hpp"
+#include <string>
 
 #include "intel_gpu/runtime/error_handler.hpp"
-#include "primitive_type_base.h"
 #include "json_object.h"
-
-#include <string>
+#include "max_pool_shape_inference.hpp"
+#include "openvino/core/validation_util.hpp"
+#include "pooling_inst.h"
+#include "primitive_type_base.h"
+#include "sliding_window_utils.hpp"
 
 using namespace ov::intel_gpu;
 
@@ -28,7 +27,7 @@ layout pooling_inst::calc_output_layout(parent::typed_node const& node, kernel_i
     auto window_size = desc->size;
 
     // auto output_type = node.get_primitive()->output_data_type ? *node.get_primitive()->output_data_type : input_layout.data_type;
-    // FIXME: dirty hack. Replace it with optional output data type (above) once IE returns correct precision on edges
+    // FIXME: dirty hack. Replace it with optional output data type (above) once OV returns correct precision on edges
     auto output_type = input_layout.data_type;
 
     if (output_type == data_types::u8 || output_type == data_types::i8) {
@@ -38,7 +37,7 @@ layout pooling_inst::calc_output_layout(parent::typed_node const& node, kernel_i
     }
 
     if (impl_param.has_fused_primitives()) {
-        output_type = impl_param.get_fused_output_layout().data_type;
+        output_type = impl_param.get_output_element_type();
 
         // pooling doesn't support i32 data type
         // FIXME: Someday delete this, when pooling supports i32 output.
@@ -47,13 +46,13 @@ layout pooling_inst::calc_output_layout(parent::typed_node const& node, kernel_i
         }
     }
 
-    uint32_t stride_z = stride.size() >= 3 ? stride[stride.size() - 3] : 1;
-    uint32_t stride_y = stride.size() >= 2 ? stride[stride.size() - 2] : 1;
-    uint32_t stride_x = stride.size() >= 1 ? stride[stride.size() - 1] : 1;
+    auto stride_z = stride.size() >= 3 ? stride[stride.size() - 3] : 1;
+    auto stride_y = stride.size() >= 2 ? stride[stride.size() - 2] : 1;
+    auto stride_x = stride.size() >= 1 ? stride[stride.size() - 1] : 1;
 
-    uint32_t kernel_z = window_size.size() >= 3 ? window_size[window_size.size() - 3] : 1;
-    uint32_t kernel_y = window_size.size() >= 2 ? window_size[window_size.size() - 2] : 1;
-    uint32_t kernel_x = window_size.size() >= 1 ? window_size[window_size.size() - 1] : 1;
+    auto kernel_z = window_size.size() >= 3 ? window_size[window_size.size() - 3] : 1;
+    auto kernel_y = window_size.size() >= 2 ? window_size[window_size.size() - 2] : 1;
+    auto kernel_x = window_size.size() >= 1 ? window_size[window_size.size() - 1] : 1;
 
     // TODO: Consider moving general parameter verification to arguments constructor.
     CLDNN_ERROR_LESS_OR_EQUAL_THAN(desc->id,
@@ -127,7 +126,7 @@ layout pooling_inst::calc_output_layout(parent::typed_node const& node, kernel_i
     // TODO: Check compatibility of output size calculation (with caffe).
     tensor size(1);
     for (size_t i = 0; i < window_size.size(); i++) {
-        size.spatial[i] = window_size[window_size.size() - i - 1];
+        size.spatial[i] = static_cast<tensor::value_type>(window_size[window_size.size() - i - 1]);
     }
     auto output_range = calc_sliding_window_output_range<swor_mode::exceed_once_data>(input_layout.get_tensor(),
                                                                                       size,
@@ -158,7 +157,7 @@ std::vector<layout> pooling_inst::calc_output_layouts(pooling_node const& /*node
         }
     }
     if (impl_param.has_fused_primitives()) {
-        output_dtype = impl_param.get_fused_output_layout().data_type;
+        output_dtype = impl_param.get_output_element_type();
 
         // pooling doesn't support i32 data type
         // FIXME: Someday delete this, when pooling supports i32 output.
@@ -171,8 +170,18 @@ std::vector<layout> pooling_inst::calc_output_layouts(pooling_node const& /*node
     output_shape[0] = input_shape[0];
     output_shape[1] = input_shape[1];
 
+    std::vector<layout> out_layouts = {
+        layout{output_shape, output_dtype, input_layout.format}
+    };
+
+    if (desc->num_outputs == 2) {
+        auto l = out_layouts[0];
+        l.data_type = desc->index_element_type;
+        out_layouts.push_back(l);
+    }
+
     if (input_shape.is_dynamic()) {
-        return { layout{output_shape, input_layout.data_type, input_layout.format} };
+        return out_layouts;
     }
 
     if (desc->with_output_size) {
@@ -221,21 +230,12 @@ std::vector<layout> pooling_inst::calc_output_layouts(pooling_node const& /*node
     ov::CoordinateDiff pads_end(desc->pads_end.begin(), desc->pads_end.end());
     auto auto_pad = desc->auto_pad;
 
-    if (auto_pad == ov::op::PadType::SAME_UPPER || auto_pad == ov::op::PadType::SAME_LOWER) {
-        pads_begin.clear();
-        pads_end.clear();
-        ngraph::try_apply_auto_padding(input_shape,
-                                       kernel_size,
-                                       stride,
-                                       dilation,
-                                       auto_pad,
-                                       pads_end,
-                                       pads_begin);
-    }
-    if (auto_pad == ov::op::PadType::VALID) {
-        pads_begin = ov::CoordinateDiff(pads_begin.size(), 0);
-        pads_end = ov::CoordinateDiff(pads_end.size(), 0);
-    }
+    ov::op::v8::MaxPool op;
+    op.set_strides(stride);
+    op.set_kernel(kernel_size);
+    op.set_auto_pad(auto_pad);
+
+    ov::op::pooling::apply_padding(&op, input_layout.get_partial_shape(), dilation, pads_begin, pads_end);
 
     size_t spatial_size = input_shape.size() - 2;
     for (size_t i = 0; i < spatial_size; ++i) {
@@ -246,8 +246,14 @@ std::vector<layout> pooling_inst::calc_output_layouts(pooling_node const& /*node
         output_shape[i + 2] = out_dim;
     }
 
-    return { layout{output_shape, output_dtype, input_layout.format} };
+    for (auto& ol : out_layouts) {
+        ol.set_partial_shape(output_shape);
+    }
+
+    return out_layouts;
 }
+
+template std::vector<layout> pooling_inst::calc_output_layouts<ov::PartialShape>(pooling_node const& node, const kernel_impl_params& impl_param);
 
 std::string pooling_inst::to_string(pooling_node const& node) {
     auto desc = node.get_primitive();

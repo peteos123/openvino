@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -7,7 +7,7 @@
 
 #include <iostream>
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(__MINGW32__) && !defined(__MINGW64__)
 #    include "samples/os/windows/w_dirent.h"
 #else
 #    include <dirent.h>
@@ -29,8 +29,7 @@
 void readInputFilesArguments(std::vector<std::string>& files, const std::string& arg) {
     struct stat sb;
     if (stat(arg.c_str(), &sb) != 0) {
-        slog::warn << "File " << arg << " cannot be opened!" << slog::endl;
-        return;
+        throw std::invalid_argument(arg + " file or directory not found.");
     }
     if (S_ISDIR(sb.st_mode)) {
         struct CloseDir {
@@ -43,16 +42,19 @@ void readInputFilesArguments(std::vector<std::string>& files, const std::string&
         using Dir = std::unique_ptr<DIR, CloseDir>;
         Dir dp(opendir(arg.c_str()));
         if (dp == nullptr) {
-            slog::warn << "Directory " << arg << " cannot be opened!" << slog::endl;
-            return;
+            throw std::invalid_argument(arg + " directory cannot be opened!");
         }
 
         struct dirent* ep;
+        size_t files_size = files.size();
         while (nullptr != (ep = readdir(dp.get()))) {
             std::string fileName = ep->d_name;
             if (fileName == "." || fileName == "..")
                 continue;
             files.push_back(arg + "/" + ep->d_name);
+        }
+        if (files.size() == files_size) {
+            throw std::invalid_argument("No files were found in directory " + arg);
         }
     } else {
         files.push_back(arg);
@@ -171,7 +173,7 @@ void printInputAndOutputsInfo(const ov::Model& network) {
     slog::info << "model name: " << network.get_friendly_name() << slog::endl;
 
     const std::vector<ov::Output<const ov::Node>> inputs = network.inputs();
-    for (const ov::Output<const ov::Node> input : inputs) {
+    for (const ov::Output<const ov::Node>& input : inputs) {
         slog::info << "    inputs" << slog::endl;
 
         const std::string name = input.get_names().empty() ? "NONE" : input.get_any_name();
@@ -185,7 +187,7 @@ void printInputAndOutputsInfo(const ov::Model& network) {
     }
 
     const std::vector<ov::Output<const ov::Node>> outputs = network.outputs();
-    for (const ov::Output<const ov::Node> output : outputs) {
+    for (const ov::Output<const ov::Node>& output : outputs) {
         slog::info << "    outputs" << slog::endl;
 
         const std::string name = output.get_names().empty() ? "NONE" : output.get_any_name();
@@ -345,8 +347,8 @@ ov::element::Type getPrecision(std::string value,
 
 ov::element::Type getPrecision2(const std::string& value) {
     static const std::unordered_map<std::string, ov::element::Type> supported_precisions = {
-        {"FP32", ov::element::f32},
-        {"FP16", ov::element::f16},
+        {"F32", ov::element::f32},
+        {"F16", ov::element::f16},
         {"BF16", ov::element::bf16},
         {"U64", ov::element::u64},
         {"I64", ov::element::i64},

@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -10,7 +10,6 @@
 
 #include "openvino/core/node_vector.hpp"
 #include "openvino/frontend/tensorflow/node_context.hpp"
-#include "openvino_conversions.hpp"
 #include "utils.hpp"
 
 namespace ov {
@@ -19,6 +18,8 @@ namespace tensorflow {
 namespace op {
 
 const std::map<std::string, CreatorFunction> get_supported_ops();
+
+const std::vector<std::string> get_supported_ops_via_tokenizers();
 }  // namespace op
 }  // namespace tensorflow
 }  // namespace frontend

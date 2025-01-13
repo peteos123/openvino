@@ -1,37 +1,45 @@
-// Copyright (C) 2018-2022 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include <ngraph/pattern/op/or.hpp>
-#include <ngraph/pattern/op/wrap_type.hpp>
-#include <ngraph/validation_util.hpp>
-#include <ngraph/variant.hpp>
+#include "transformations/common_optimizations/strides_optimization.hpp"
+
 #include <numeric>
-#include <openvino/opsets/opset7.hpp>
-#include <transformations/common_optimizations/strides_optimization.hpp>
-#include <transformations/rt_info/strides_property.hpp>
-#include <transformations/utils/utils.hpp>
 
 #include "itt.hpp"
+#include "openvino/core/validation_util.hpp"
+#include "openvino/op/concat.hpp"
+#include "openvino/op/constant.hpp"
+#include "openvino/op/convolution.hpp"
+#include "openvino/op/max_pool.hpp"
+#include "openvino/op/reshape.hpp"
+#include "openvino/op/shape_of.hpp"
+#include "openvino/op/squeeze.hpp"
+#include "openvino/op/util/binary_elementwise_arithmetic.hpp"
+#include "openvino/pass/pattern/op/or.hpp"
+#include "openvino/pass/pattern/op/wrap_type.hpp"
+#include "transformations/rt_info/strides_property.hpp"
+#include "transformations/utils/utils.hpp"
 
+using namespace std;
 using namespace ov;
 
-static bool can_propagate_conv_stride(const std::shared_ptr<ngraph::Node>& conv) {
+static bool can_propagate_conv_stride(const std::shared_ptr<ov::Node>& conv) {
     const auto& kernel_shape = conv->input_value(1).get_shape();
     return std::all_of(kernel_shape.begin() + 2, kernel_shape.end(), [](size_t s) -> bool {
         return s == 1;
     });
 }
 
-static std::tuple<ngraph::Strides, bool> check_next_ops(const std::vector<ngraph::Input<ngraph::Node>>& next_ops) {
-    std::vector<ngraph::Strides> strides;
+static std::tuple<ov::Strides, bool> check_next_ops(const std::vector<ov::Input<ov::Node>>& next_ops) {
+    std::vector<ov::Strides> strides;
     for (const auto& op : next_ops) {
         if (!has_strides_prop(op)) {
-            return std::make_tuple(ngraph::Strides{}, false);
+            return std::make_tuple(ov::Strides{}, false);
         }
         strides.push_back(get_strides_prop(op));
     }
-    bool all_ops_are_valid = std::all_of(strides.begin(), strides.end(), [&strides](const ngraph::Strides& s) -> bool {
+    bool all_ops_are_valid = std::all_of(strides.begin(), strides.end(), [&strides](const ov::Strides& s) -> bool {
         bool all_ones = std::all_of(s.begin(), s.end(), [](size_t i) -> bool {
             return i == 1;
         });
@@ -40,44 +48,42 @@ static std::tuple<ngraph::Strides, bool> check_next_ops(const std::vector<ngraph
     return std::make_tuple(strides[0], all_ops_are_valid);
 }
 
-static void insert_pooling(const ngraph::Output<ngraph::Node>& first,
-                           ngraph::Input<ngraph::Node>& second,
-                           const ngraph::Strides& strides) {
+static void insert_pooling(const Output<Node>& first, Input<Node>& second, const Strides& strides) {
+    pass::NodeRegistry rg;
     auto first_node = first.get_node_shared_ptr();
-    auto rank = first.get_partial_shape().rank();
-    bool do_reshape = rank.is_static() && static_cast<size_t>(rank.get_length()) < strides.size() + 2;
+    const auto rank = first.get_partial_shape().rank();
+    const bool do_reshape = rank.is_static() && static_cast<size_t>(rank.get_length()) < strides.size() + 2;
     if (do_reshape) {
-        size_t diff = strides.size() + 2 - static_cast<size_t>(rank.get_length());
-        auto ones = opset7::Constant::create(ngraph::element::i64, ngraph::Shape{diff}, std::vector<int64_t>(diff, 1));
-        auto current_shape = std::make_shared<opset7::ShapeOf>(first);
-        std::shared_ptr<ngraph::Node> new_shape =
-            std::make_shared<opset7::Concat>(ngraph::OutputVector{ones, current_shape}, 0);
-        std::shared_ptr<ngraph::Node> constant_new_shape = get_constant_from_source(new_shape);
-        if (constant_new_shape)
+        const size_t diff = strides.size() + 2 - static_cast<size_t>(rank.get_length());
+        const auto ones = rg.make<ov::op::v0::Constant>(element::i64, Shape{diff}, vector<int64_t>(diff, 1));
+        const auto current_shape = rg.make<ov::op::v3::ShapeOf>(first);
+        shared_ptr<Node> new_shape = rg.make<ov::op::v0::Concat>(OutputVector{ones, current_shape}, 0);
+        if (const auto constant_new_shape = ov::util::get_constant_from_source(new_shape)) {
+            rg.add(constant_new_shape);
             new_shape = constant_new_shape;
-        first_node = std::make_shared<opset7::Reshape>(first_node, new_shape, false);
+        }
+        first_node = rg.make<ov::op::v1::Reshape>(first_node, new_shape, false);
     }
-    std::shared_ptr<ngraph::Node> new_node = std::make_shared<opset7::MaxPool>(first_node,
-                                                                               strides,
-                                                                               ngraph::Shape{},
-                                                                               ngraph::Shape{},
-                                                                               ngraph::Shape(strides.size(), 1));
+    shared_ptr<Node> new_node =
+        rg.make<ov::op::v1::MaxPool>(first_node, strides, Shape{}, Shape{}, Shape(strides.size(), 1));
     if (do_reshape) {
         // squeeze dimensions back
-        size_t diff = strides.size() + 2 - static_cast<size_t>(rank.get_length());
-        std::vector<size_t> axes(diff);
-        std::iota(axes.begin(), axes.end(), 0);
-        new_node = std::make_shared<opset7::Squeeze>(
-            new_node,
-            opset7::Constant::create(ngraph::element::u64, ngraph::Shape{diff}, axes));
+        const size_t diff = strides.size() + 2 - static_cast<size_t>(rank.get_length());
+        vector<size_t> axes(diff);
+        iota(axes.begin(), axes.end(), 0);
+        new_node =
+            rg.make<ov::op::v0::Squeeze>(new_node, rg.make<ov::op::v0::Constant>(element::u64, Shape{diff}, axes));
     }
-    std::shared_ptr<ngraph::Node> constant_new_node = get_constant_from_source(new_node);
-    if (constant_new_node)
+    if (const auto constant_new_node = ov::util::get_constant_from_source(new_node)) {
+        rg.add(constant_new_node);
         new_node = constant_new_node;
+    }
+
+    copy_runtime_info(as_node_vector({second.get_source_output()}), rg.get());
     second.replace_source_output(new_node);
 }
 
-static void handle_not_equal_stride_props(std::vector<ngraph::Input<ngraph::Node>>& next_ops) {
+static void handle_not_equal_stride_props(std::vector<ov::Input<ov::Node>>& next_ops) {
     for (auto& op : next_ops) {
         if (!has_strides_prop(op))
             continue;
@@ -86,7 +92,7 @@ static void handle_not_equal_stride_props(std::vector<ngraph::Input<ngraph::Node
             return s == 1;
         });
         if (!are_strides_ones) {
-            auto conv = dynamic_cast<opset7::Convolution*>(op.get_node());
+            auto conv = ov::as_type<ov::op::v1::Convolution>(op.get_node());
             if (conv) {
                 conv->set_strides(strides);
             } else {
@@ -96,7 +102,7 @@ static void handle_not_equal_stride_props(std::vector<ngraph::Input<ngraph::Node
     }
 }
 
-static void remove_strides_property_from_nodes(std::vector<ngraph::Input<ngraph::Node>>& nodes) {
+static void remove_strides_property_from_nodes(std::vector<ov::Input<ov::Node>>& nodes) {
     for (auto& node : nodes) {
         remove_strides_prop(node);
     }
@@ -114,10 +120,10 @@ ov::pass::ConvStridesPropagation::ConvStridesPropagation() {
         });
     });
     auto weights = pattern::any_input(pattern::has_static_shape());
-    auto conv_pattern = pattern::wrap_type<opset7::Convolution>({data, weights});
+    auto conv_pattern = pattern::wrap_type<ov::op::v1::Convolution>({data, weights});
 
     ov::matcher_pass_callback callback = [=](pattern::Matcher& m) {
-        auto conv = std::dynamic_pointer_cast<opset7::Convolution>(m.get_match_root());
+        auto conv = ov::as_type_ptr<ov::op::v1::Convolution>(m.get_match_root());
         if (!conv)
             return false;
 

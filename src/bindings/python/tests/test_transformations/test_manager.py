@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-# Copyright (C) 2022 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
-from openvino.runtime.passes import Manager, GraphRewrite, BackwardGraphRewrite, Serialize
+from openvino.passes import Manager, GraphRewrite, BackwardGraphRewrite, Serialize
 
 from tests.test_transformations.utils.utils import MyModelPass, PatternReplacement, expect_exception
 
@@ -32,14 +32,10 @@ def test_registration_and_pass_name():
     GraphRewrite().set_name("Anchor")
     BackwardGraphRewrite().set_name("BackAnchor")
 
-    # Preserve legacy behaviour when registered pass doesn't exist
-    # and in this case we shouldn't throw an exception.
-    manager.register_pass("NotExistingPass")
-
 
 def test_negative_pass_registration():
     manager = Manager()
     expect_exception(lambda: manager.register_pass(PatternReplacement))
     expect_exception(lambda: manager.register_pass("PatternReplacement", PatternReplacement()))
     expect_exception(lambda: manager.register_pass("Serialize", Serialize("out.xml", "out.bin")))
-    expect_exception(lambda: manager.register_pass("Serialize", "out.xml", "out.bin", "out.wrong"))
+    expect_exception(lambda: manager.register_pass(Serialize("out.xml", "out.bin", "out.wrong")))
